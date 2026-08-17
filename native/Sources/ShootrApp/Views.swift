@@ -83,9 +83,14 @@ struct ShootListView: View {
                     if !model.shoots.isEmpty {
                         SectionHeader("Shoots")
                         ForEach(model.shoots) { shoot in
-                            ShootCard(shoot: shoot) {
-                                Task { await model.open(shoot: shoot) }
-                            }
+                            ShootCard(
+                                shoot: shoot,
+                                onAnalyze: {
+                                    Task { await model.analyzeShoot(shoot) }
+                                },
+                                action: {
+                                    Task { await model.open(shoot: shoot) }
+                                })
                         }
                     }
                 }
@@ -213,6 +218,7 @@ struct ProposalCard: View {
 
 struct ShootCard: View {
     let shoot: Shoot
+    var onAnalyze: (() -> Void)?
     let action: () -> Void
     @State private var hovering = false
 
@@ -244,6 +250,14 @@ struct ShootCard: View {
                     }
                 }
                 Spacer()
+                if let onAnalyze {
+                    Button(shoot.latestSelectionId == nil
+                           ? "Analyze & cull" : "Re-cull") {
+                        onAnalyze()
+                    }
+                    .font(Theme.caption)
+                    .buttonStyle(.bordered)
+                }
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.inkMuted)

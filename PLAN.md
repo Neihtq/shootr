@@ -242,8 +242,12 @@ outcome and can be built now.
 - ~~Library management (scope change per user 2026-08: native replaces web as the
   control panel) — NSOpenPanel folder picker, library add/remove with confirm,
   proposal cards with genre picker, create-&-analyze with live job status~~
-- Compare view with synced zoom (native's marquee feature — next)
-- Export dialog
+- ~~Compare view: 2–4 panes, one shared pan/zoom transform, face-snapped 100%,
+  `C` to open~~
+- ~~Export dialog: engine diff, explicit conflict confirm, DNG notice, LrC
+  read-metadata caveat~~
+- ~~Sharpness heatmap overlay (`S`), aligned to the fitted image~~
+- ~~Shoot settings sheet: rename + genre switch (instant rescore)~~
 - Trackpad pinch/pan gestures on the loupe
 - GPU throttling while an analyze job runs
 - Filmstrip prefetch; Quick Look / drag-out integration

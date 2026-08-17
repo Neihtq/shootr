@@ -122,6 +122,26 @@ final class ReviewModel {
         }
     }
 
+    /// "Analyze & cull" on an existing shoot. Also the re-run path: photos
+    /// already analyzed are skipped (the engine only queues un-analyzed
+    /// ones), and the derived steps re-run either way.
+    func analyzeShoot(_ shoot: Shoot) async {
+        do {
+            let job = try await api.analyze(shootId: shoot.id)
+            if job.total > 0 {
+                analyzeStatus = "analyzing \(job.total) photos…"
+                Task { await self.watchJob(job.jobId) }
+            } else {
+                // Everything analyzed: engine chained group/score/select
+                // inline; results are ready right now.
+                analyzeStatus = nil
+                await loadHome()
+            }
+        } catch {
+            errorMessage = String(describing: error)
+        }
+    }
+
     private func watchJob(_ jobId: Int) async {
         while true {
             try? await Task.sleep(for: .seconds(1))
