@@ -44,9 +44,11 @@ export interface PhotoDetail {
   raw_format: string | null;
   captured_at: string | null;
   camera_model: string | null;
+  lens_model: string | null;
   iso: number | null;
   shutter: number | null;
   aperture: number | null;
+  focal_length: number | null;
   exposure_bias: number | null;
   missing: boolean;
   analysis: {

@@ -471,6 +471,11 @@ struct GroupReviewView: View {
                     .lineLimit(1)
             }
             Spacer()
+            if let photo = model.photo, !photo.exifLine.isEmpty {
+                Text(photo.exifLine)
+                    .font(Theme.value)
+                    .foregroundStyle(Theme.inkSecondary)
+            }
             KeyHints()
         }
         .padding(.horizontal, 14)
@@ -733,6 +738,36 @@ struct EvidenceView: View {
                         .font(Theme.caption)
                         .foregroundStyle(Theme.inkMuted)
                 }
+
+                // Capture info — from EXIF, probed at ingest.
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Capture")
+                        .font(Theme.micro)
+                        .foregroundStyle(Theme.inkMuted)
+                        .textCase(.uppercase)
+                    if !photo.exifLine.isEmpty {
+                        Text(photo.exifLine)
+                            .font(Theme.value)
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
+                    if let cam = photo.cameraModel {
+                        Text(cam)
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    if let lens = photo.lensModel {
+                        Text(lens)
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkMuted)
+                            .lineLimit(1)
+                    }
+                    if let t = photo.capturedAt {
+                        Text(t.replacingOccurrences(of: "T", with: "  "))
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                }
+                .padding(.top, 4)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

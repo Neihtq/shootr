@@ -56,9 +56,42 @@ struct PhotoDetail: Codable {
     let faces: [FaceInfo]
     let score: Score?
     let selection: SelectionInfo?
+    // EXIF (probed at ingest; design 02 §2 stage 4)
+    let cameraModel: String?
+    let lensModel: String?
+    let iso: Int?
+    let shutter: Double?
+    let aperture: Double?
+    let focalLength: Double?
+    let exposureBias: Double?
+    let capturedAt: String?
+
     enum CodingKeys: String, CodingKey {
         case id, filename, missing, faces, score, selection
         case relPath = "rel_path"
+        case cameraModel = "camera_model"
+        case lensModel = "lens_model"
+        case iso, shutter, aperture
+        case focalLength = "focal_length"
+        case exposureBias = "exposure_bias"
+        case capturedAt = "captured_at"
+    }
+
+    /// "1/250s · f/1.8 · ISO 800 · 85mm · +0.3 EV" — the photographer's
+    /// shorthand. Only present fields appear.
+    var exifLine: String {
+        var parts: [String] = []
+        if let s = shutter {
+            parts.append(s >= 1 ? String(format: "%.1fs", s)
+                : "1/\(Int((1 / s).rounded()))s")
+        }
+        if let a = aperture { parts.append(String(format: "f/%.1f", a)) }
+        if let i = iso { parts.append("ISO \(i)") }
+        if let f = focalLength { parts.append("\(Int(f.rounded()))mm") }
+        if let b = exposureBias, b != 0 {
+            parts.append(String(format: "%+.1f EV", b))
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

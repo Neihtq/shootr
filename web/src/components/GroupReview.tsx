@@ -14,6 +14,7 @@ import {
 } from "../api/hooks";
 import { thumbUrl } from "../api/client";
 import type { Group, Selection, SelectionState } from "../api/types";
+import { exifLine } from "../exif";
 import { CompareView } from "./CompareView";
 import { EvidencePanel } from "./EvidencePanel";
 import { EyeCrops } from "./EyeCrops";
@@ -211,6 +212,9 @@ export function GroupReview({
                   “{photo.selection.reason}”
                 </span>
                 <span className="ml-auto" />
+                <span className="whitespace-nowrap font-mono text-[11px] text-neutral-400">
+                  {exifLine(photo)}
+                </span>
                 <Key label="P pick" onClick={() => setState("pick")} />
                 <Key label="A alt" onClick={() => setState("alt")} />
                 <Key label="X reject" onClick={() => setState("reject")} />

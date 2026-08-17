@@ -7,6 +7,7 @@
  */
 
 import type { PhotoDetail, ScoreComponent } from "../api/types";
+import { exifLine } from "../exif";
 
 const METRIC_LABELS: Record<string, string> = {
   eye_focus: "eye focus",
@@ -108,6 +109,29 @@ export function EvidencePanel({ photo }: { photo: PhotoDetail }) {
           )}
         </div>
       )}
+      <div className="mt-3 border-t border-neutral-800 pt-2">
+        <div className="mb-1 text-[10px] uppercase text-neutral-500">
+          Capture
+        </div>
+        <div className="font-mono text-[11px] text-neutral-400">
+          {exifLine(photo)}
+        </div>
+        {photo.camera_model && (
+          <div className="text-[10px] text-neutral-500">
+            {photo.camera_model}
+          </div>
+        )}
+        {photo.lens_model && (
+          <div className="truncate text-[10px] text-neutral-500">
+            {photo.lens_model}
+          </div>
+        )}
+        {photo.captured_at && (
+          <div className="text-[10px] text-neutral-500">
+            {photo.captured_at.replace("T", "  ")}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
