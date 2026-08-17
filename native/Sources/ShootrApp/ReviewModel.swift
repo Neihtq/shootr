@@ -61,6 +61,10 @@ final class ReviewModel {
     var proposals: [APIClient.Proposal] = []
     var proposalsFor: Int?  // library id the proposals belong to
     var analyzeStatus: String?
+    /// Determinate progress for the running analyze job, rendered as a bar
+    /// on the shoot card being analyzed.
+    var analyzeProgress: (completed: Int, total: Int)?
+    var analyzingShootId: Int?
 
     func loadHome() async {
         do {
@@ -111,8 +115,11 @@ final class ReviewModel {
             // Kick off analysis immediately; the engine chains
             // group → score → select when it completes.
             let job = try await api.analyze(shootId: shoot.id)
-            analyzeStatus = job.total > 0
-                ? "analyzing \(job.total) photos…" : nil
+            if job.total > 0 {
+                analyzeStatus = "analyzing…"
+                analyzingShootId = shoot.id
+                analyzeProgress = (0, job.total)
+            }
             await loadHome()
             if job.total > 0 {
                 Task { await self.watchJob(job.jobId) }
@@ -129,7 +136,9 @@ final class ReviewModel {
         do {
             let job = try await api.analyze(shootId: shoot.id)
             if job.total > 0 {
-                analyzeStatus = "analyzing \(job.total) photos…"
+                analyzeStatus = "analyzing…"
+                analyzingShootId = shoot.id
+                analyzeProgress = (0, job.total)
                 Task { await self.watchJob(job.jobId) }
             } else {
                 // Everything analyzed: engine chained group/score/select
@@ -158,10 +167,13 @@ final class ReviewModel {
             if s.state == "done" || s.state == "failed" {
                 analyzeStatus = s.failed > 0
                     ? "analysis finished — \(s.failed) files failed" : nil
+                analyzeProgress = nil
+                analyzingShootId = nil
                 await loadHome()
                 return
             }
-            analyzeStatus = "analyzing \(s.completed)/\(s.total)…"
+            analyzeProgress = (s.completed, s.total)
+            analyzeStatus = "analyzing \(s.completed)/\(s.total)"
         }
     }
 

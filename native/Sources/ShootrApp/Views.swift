@@ -85,6 +85,8 @@ struct ShootListView: View {
                         ForEach(model.shoots) { shoot in
                             ShootCard(
                                 shoot: shoot,
+                                progress: model.analyzingShootId == shoot.id
+                                    ? model.analyzeProgress : nil,
                                 onAnalyze: {
                                     Task { await model.analyzeShoot(shoot) }
                                 },
@@ -218,49 +220,56 @@ struct ProposalCard: View {
 
 struct ShootCard: View {
     let shoot: Shoot
+    var progress: (completed: Int, total: Int)?
     var onAnalyze: (() -> Void)?
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(shoot.name)
-                        .font(Theme.heading)
-                        .foregroundStyle(Theme.ink)
-                    HStack(spacing: 6) {
-                        Text(shoot.profile)
-                            .font(Theme.micro)
-                            .foregroundStyle(Theme.inkSecondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Theme.surfaceRaised, in: Capsule())
-                        Text("\(shoot.photoCount) photos")
-                            .font(Theme.caption)
-                            .foregroundStyle(Theme.inkSecondary)
-                        if shoot.latestSelectionId != nil {
-                            HStack(spacing: 4) {
-                                StateSwatch(color: Theme.pick)
-                                Text("culled")
-                                    .font(Theme.caption)
-                                    .foregroundStyle(Theme.inkSecondary)
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(shoot.name)
+                            .font(Theme.heading)
+                            .foregroundStyle(Theme.ink)
+                        HStack(spacing: 6) {
+                            Text(shoot.profile)
+                                .font(Theme.micro)
+                                .foregroundStyle(Theme.inkSecondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Theme.surfaceRaised, in: Capsule())
+                            Text("\(shoot.photoCount) photos")
+                                .font(Theme.caption)
+                                .foregroundStyle(Theme.inkSecondary)
+                            if shoot.latestSelectionId != nil,
+                               progress == nil {
+                                HStack(spacing: 4) {
+                                    StateSwatch(color: Theme.pick)
+                                    Text("culled")
+                                        .font(Theme.caption)
+                                        .foregroundStyle(Theme.inkSecondary)
+                                }
                             }
                         }
                     }
-                }
-                Spacer()
-                if let onAnalyze {
-                    Button(shoot.latestSelectionId == nil
-                           ? "Analyze & cull" : "Re-cull") {
-                        onAnalyze()
+                    Spacer()
+                    if progress == nil, let onAnalyze {
+                        Button(shoot.latestSelectionId == nil
+                               ? "Analyze & cull" : "Re-cull") {
+                            onAnalyze()
+                        }
+                        .font(Theme.caption)
+                        .buttonStyle(.bordered)
                     }
-                    .font(Theme.caption)
-                    .buttonStyle(.bordered)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.inkMuted)
                 }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.inkMuted)
+                if let p = progress {
+                    AnalyzeProgressBar(completed: p.completed, total: p.total)
+                }
             }
             .padding(14)
             .background(
@@ -270,6 +279,36 @@ struct ShootCard: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+    }
+}
+
+/// Determinate analyze progress: thin capsule (meter spec — fill + lighter
+/// track), count + percent in text tokens beside it.
+struct AnalyzeProgressBar: View {
+    let completed: Int
+    let total: Int
+
+    private var fraction: Double {
+        total > 0 ? Double(completed) / Double(total) : 0
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.meterTrack)
+                    Capsule()
+                        .fill(Theme.pick)
+                        .frame(width: max(4, geo.size.width * fraction))
+                        .animation(.easeOut(duration: 0.6), value: fraction)
+                }
+            }
+            .frame(height: 5)
+            Text("\(completed)/\(total) · \(Int(fraction * 100))%")
+                .font(Theme.value)
+                .foregroundStyle(Theme.inkSecondary)
+                .frame(width: 110, alignment: .trailing)
+        }
     }
 }
 
