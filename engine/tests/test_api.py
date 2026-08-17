@@ -108,6 +108,19 @@ class TestContract:
         r = client.patch("/api/shoots/1", json={"profile": "portrait"})
         assert r.json()["rescored"] == 5
 
+    def test_photo_detail_serves_current_profile_score(self, env):
+        """Regression (user-reported 'sharpness 0 on EVERY picture'): score
+        rows for multiple profiles coexist; the detail endpoint must serve
+        the shoot's CURRENT profile, not an arbitrary/stale row."""
+        client, _ = env
+        run_pipeline(client)  # scores as 'event'
+        client.patch("/api/shoots/1", json={"profile": "landscape"})
+        p = client.get("/api/photos/1").json()
+        assert p["score"]["profile"] == "landscape"
+        # And the listing endpoint joins on the current profile too.
+        items = client.get("/api/shoots/1/photos").json()["items"]
+        assert all(i["total"] is not None for i in items)
+
 
 class TestPipelineFlow:
     def test_full_cull_loop(self, env):

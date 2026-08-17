@@ -94,9 +94,13 @@ FLAG_PENALTIES: dict[str, float] = {
 
 
 def weights_hash(profile: str) -> str:
+    # Curves are part of the hash: a recalibration must be visible as a
+    # different hash, or stale scores would look current (design 04 §1).
     payload = json.dumps(
         {"profile": profile, "weights": PROFILE_WEIGHTS[profile],
-         "penalties": FLAG_PENALTIES},
+         "penalties": FLAG_PENALTIES,
+         "curves": {"eye": EYE_FOCUS_CURVE, "open": EYES_OPEN_CURVE,
+                    "frame": FRAME_SHARPNESS_CURVE}},
         sort_keys=True,
     )
     return "ev1-" + hashlib.sha256(payload.encode()).hexdigest()[:8]
@@ -124,7 +128,19 @@ EYES_OPEN_CURVE = [(0.0, 0.0), (0.35, 0.1), (0.60, 0.4), (0.85, 1.0)]
 
 # Whole frame soft → motion blur / shake, not a focus miss: eye normalization
 # against a soft frame is meaningless (design 04 §2.1 guard).
-MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS = 0.15
+# CALIBRATED ON REAL FILES (271 CR3 landscapes, 2026-08): measurement-path
+# decodes (enhancement OFF) yield Tenengrad max median 0.037, p90 0.085,
+# floor 0.0075 on visually sharp frames. The original 0.15 came from
+# synthetic 0/255 checkerboards and classified 267/271 real photos as
+# motion blur. Real shake sits well below the observed sharp floor.
+MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS = 0.005
+
+# Frame-sharpness score curve, same calibration source. Absolute Tenengrad
+# is content-dependent (design 03 §3.1: "normalization is the whole trick"),
+# so this maps the observed real-file range, not a theoretical 0..1:
+# ~0.005 unusable → ~0.04 (median of real sharp frames) solid → 0.12+ crisp.
+FRAME_SHARPNESS_CURVE = [(0.005, 0.0), (0.015, 0.4), (0.04, 0.75),
+                         (0.12, 1.0)]
 # Detector abstains beyond this |yaw| (radians): profile views have no
 # reliable eye signal — abstain, don't guess (design 04 §2.2).
 MAX_YAW_FOR_EYE_METRICS = 0.6
@@ -231,7 +247,7 @@ def _sharpness(frame: FrameMeasurement) -> Component:
     if frame.sharpness_max < MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS:
         return Component(0.0, {"diagnosis": "motion_blur_or_shake",
                                "sharpness_max": frame.sharpness_max})
-    value = min(1.0, frame.sharpness_max)
+    value = _piecewise(frame.sharpness_max, FRAME_SHARPNESS_CURVE)
     return Component(value, {"sharpness_max": frame.sharpness_max,
                              "sharpness_mean": frame.sharpness_mean})
 

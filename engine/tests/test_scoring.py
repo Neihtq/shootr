@@ -91,8 +91,10 @@ class TestEyeSemantics:
         assert f_sharp == 1.0 and f_missed < 0.15
 
     def test_soft_frame_routes_to_motion_blur_not_focus_miss(self):
+        # 0.002 is below the calibrated motion-blur floor (real sharp files
+        # measure ≥0.0075; see FRAME_SHARPNESS_CURVE calibration note).
         m = Measurements(
-            frame=FrameMeasurement(sharpness_max=0.05, sharpness_mean=0.02,
+            frame=FrameMeasurement(sharpness_max=0.002, sharpness_mean=0.001,
                                    clipped_hi=0.0, clipped_lo=0.0),
             faces=[face(sharp_l=0.1, sharp_r=0.1)],
         )

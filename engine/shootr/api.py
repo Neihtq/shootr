@@ -301,8 +301,15 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                     (photo_id,))
             ]
 
-            s = c.execute("SELECT * FROM score WHERE photo_id = ?",
-                          (photo_id,)).fetchone()
+            # Score rows for several profiles coexist (PK photo_id+profile,
+            # design 01); serve the one matching the shoot's CURRENT
+            # profile — an arbitrary row can be stale or the wrong genre.
+            s = c.execute(
+                "SELECT sc.* FROM score sc "
+                "JOIN photo p ON p.id = sc.photo_id "
+                "JOIN shoot sh ON sh.id = p.shoot_id "
+                "WHERE sc.photo_id = ? AND sc.profile = sh.profile",
+                (photo_id,)).fetchone()
             out["score"] = None
             if s:
                 out["score"] = {
@@ -431,7 +438,9 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
             rows = c.execute(
                 "SELECT p.id, p.filename, p.captured_at, p.missing, "
                 "s.total, se.state FROM photo p "
+                "JOIN shoot sh ON sh.id = p.shoot_id "
                 "LEFT JOIN score s ON s.photo_id = p.id "
+                "AND s.profile = sh.profile "
                 "LEFT JOIN selection_entry se ON se.photo_id = p.id "
                 "AND se.selection_id = (SELECT MAX(id) FROM selection "
                 "                       WHERE shoot_id = ?) "
