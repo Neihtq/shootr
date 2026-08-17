@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# Swift
+.build/
+*.xcodeproj
+ShootrApp.app/
+
+# Node
+node_modules/
+web/dist/
+
+# App data — never commit user photo metadata or thumbnails
+*.db
+*.db-wal
+*.db-shm
+
+# Sample photos (large RAWs; add locally, never push)
+samples/
+
+# macOS
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json

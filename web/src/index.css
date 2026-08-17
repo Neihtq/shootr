@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* 16×16 grid columns for the sharpness overlay */
+@layer utilities {
+  .grid-cols-16 {
+    grid-template-columns: repeat(16, minmax(0, 1fr));
+  }
+  .grid-rows-16 {
+    grid-template-rows: repeat(16, minmax(0, 1fr));
+  }
+}
