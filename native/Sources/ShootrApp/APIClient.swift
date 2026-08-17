@@ -271,4 +271,88 @@ struct APIClient: Sendable {
     func jobStatus(_ id: Int) async throws -> JobStatus {
         try await request("GET", "api/jobs/\(id)")
     }
+
+    // MARK: export (design 07 §3 / 10 §2 — engine decides, client displays)
+
+    struct ExportConflict: Codable {
+        let path: String
+        let oldRating: Int?
+        let newRating: Int?
+        enum CodingKeys: String, CodingKey {
+            case path
+            case oldRating = "old_rating"
+            case newRating = "new_rating"
+        }
+    }
+
+    struct ExportPreview: Codable {
+        let newSidecars: Int
+        let updates: Int
+        let conflicts: [ExportConflict]
+        let skippedDng: [String]
+        let unchanged: Int
+        let backupDir: String
+        enum CodingKeys: String, CodingKey {
+            case updates, conflicts, unchanged
+            case newSidecars = "new_sidecars"
+            case skippedDng = "skipped_dng"
+            case backupDir = "backup_dir"
+        }
+    }
+
+    func exportPreview(selectionId: Int) async throws -> ExportPreview {
+        try await request(
+            "POST", "api/selections/\(selectionId)/export/preview")
+    }
+
+    struct ExportBody: Codable {
+        let confirmOverwrite: Bool
+        enum CodingKeys: String, CodingKey {
+            case confirmOverwrite = "confirm_overwrite"
+        }
+    }
+    struct ExportResult: Codable {
+        let written: Int
+        let skippedDng: [String]
+        let unchanged: Int
+        enum CodingKeys: String, CodingKey {
+            case written, unchanged
+            case skippedDng = "skipped_dng"
+        }
+    }
+
+    func export(selectionId: Int, confirmOverwrite: Bool)
+        async throws -> ExportResult {
+        let body = try JSONEncoder().encode(
+            ExportBody(confirmOverwrite: confirmOverwrite))
+        return try await request(
+            "POST", "api/selections/\(selectionId)/export", body: body)
+    }
+
+    // MARK: shoot settings
+
+    struct ShootPatchBody: Codable {
+        let name: String?
+        let profile: String?
+    }
+    struct ShootPatchResponse: Codable {
+        let id: Int
+        let rescored: Int
+    }
+
+    func patchShoot(_ id: Int, name: String? = nil, profile: String? = nil)
+        async throws -> ShootPatchResponse {
+        let body = try JSONEncoder().encode(
+            ShootPatchBody(name: name, profile: profile))
+        return try await request("PATCH", "api/shoots/\(id)", body: body)
+    }
+
+    struct SharpnessMap: Codable {
+        let tiles: [[Double]]?
+        let max: Double?
+    }
+
+    func sharpnessMap(photoId: Int) async throws -> SharpnessMap {
+        try await request("GET", "api/photos/\(photoId)/sharpness-map")
+    }
 }

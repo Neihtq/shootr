@@ -23,6 +23,21 @@ final class ReviewModel {
     /// Z (design 11 §5): loupe at 100% pixels vs fit. The loupe view centers
     /// on the primary face when zoomed.
     var zoomed = false
+    var showSharpness = false  // S — 16×16 heatmap overlay
+    var comparing = false  // C — synced compare sheet
+    var showExport = false
+    var showSettings = false
+
+    /// Compare the current frame against the group's top-ranked others
+    /// (the pick-vs-alt judgement, design 11 §4).
+    var compareIds: [Int] {
+        guard let g = currentGroup, let pid = currentPhotoId else { return [] }
+        let ranked = g.photoIds
+            .filter { $0 != pid }
+            .sorted { (entryByPhoto[$0]?.rank ?? 99)
+                < (entryByPhoto[$1]?.rank ?? 99) }
+        return [pid] + ranked.prefix(3)
+    }
 
     var entryByPhoto: [Int: SelectionEntry] {
         Dictionary(uniqueKeysWithValues:

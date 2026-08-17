@@ -289,6 +289,17 @@ struct GroupReviewView: View {
         .background(KeyCatcher(model: model))
         .background(Theme.bg)
         .frame(minWidth: 1040, minHeight: 660)
+        .sheet(isPresented: $model.showExport) {
+            if let selId = model.shoot?.latestSelectionId {
+                ExportSheet(selectionId: selId)
+            }
+        }
+        .sheet(isPresented: $model.showSettings) {
+            ShootSettingsSheet(model: model)
+        }
+        .sheet(isPresented: $model.comparing) {
+            CompareSheet(photoIds: model.compareIds, model: model)
+        }
     }
 
     private var header: some View {
@@ -329,6 +340,18 @@ struct GroupReviewView: View {
                     .foregroundStyle(Theme.inkSecondary)
             }
             .toggleStyle(.checkbox)
+            Button {
+                model.showSettings = true
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 11))
+            }
+            .help("Shoot settings — rename, change genre (instant rescore)")
+            Button("Export…") {
+                model.showExport = true
+            }
+            .font(Theme.caption)
+            .disabled(model.shoot?.latestSelectionId == nil)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -537,6 +560,15 @@ struct LoupeView: View {
                         Image(nsImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
+                            .overlay {
+                                if model.showSharpness,
+                                   let pid = model.currentPhotoId {
+                                    // Heatmap over the fitted image area.
+                                    FittedOverlay(imageSize: image.size) {
+                                        SharpnessOverlay(photoId: pid)
+                                    }
+                                }
+                            }
                     }
                 } else {
                     ProgressView()
@@ -755,6 +787,11 @@ struct KeyCatcher: NSViewRepresentable {
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
                 [weak self] event in
                 guard let self, let model = self.model else { return event }
+                // Sheets own the keyboard while open (compare handles its
+                // own Z; export/settings are form UIs).
+                if model.comparing || model.showExport || model.showSettings {
+                    return event
+                }
                 // Don't steal keys from an active text field (the field
                 // editor is an NSTextView).
                 if event.window?.firstResponder is NSTextView { return event }
@@ -808,6 +845,9 @@ struct KeyCatcher: NSViewRepresentable {
             case "x": Task { await model.setState("reject") }
             case "e": model.showEvidence.toggle()
             case "z": model.zoomed.toggle()
+            case "s": model.showSharpness.toggle()
+            case "c":
+                if model.compareIds.count >= 2 { model.comparing.toggle() }
             default: return false
             }
             return true
