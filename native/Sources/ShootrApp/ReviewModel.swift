@@ -133,9 +133,18 @@ final class ReviewModel {
                 Task { await self.watchJob(job.jobId) }
             } else {
                 // Everything analyzed: engine chained group/score/select
-                // inline; results are ready right now.
-                analyzeStatus = nil
+                // inline and it completed in milliseconds. Without visible
+                // feedback a fast success reads as a dead button — so open
+                // the shoot on the fresh selection.
+                analyzeStatus = "re-culled ✓"
                 await loadHome()
+                if let updated = shoots.first(where: { $0.id == shoot.id }) {
+                    await open(shoot: updated)
+                }
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    if analyzeStatus == "re-culled ✓" { analyzeStatus = nil }
+                }
             }
         } catch {
             errorMessage = String(describing: error)
