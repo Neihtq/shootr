@@ -15,6 +15,7 @@ export interface KeyboardHandlers {
   onToggleSharpness: () => void;
   onToggleCompare?: () => void;
   onTogglePick?: () => void;
+  onToggleComposition?: () => void;
   /** Disable while a modal (compare view) owns the keyboard. */
   enabled?: boolean;
 }
@@ -54,6 +55,9 @@ export function useKeyboard(h: KeyboardHandlers) {
           break;
         case "s":
           h.onToggleSharpness();
+          break;
+        case "o":
+          h.onToggleComposition?.();
           break;
         case "c":
           h.onToggleCompare?.();

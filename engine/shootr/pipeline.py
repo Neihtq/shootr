@@ -45,6 +45,7 @@ def _measurements_for(row: sqlite3.Row, faces: list[sqlite3.Row],
         frame=scoring.FrameMeasurement(
             sharpness_max=frame.get("sharpness_max"),
             sharpness_mean=frame.get("sharpness_mean"),
+            sharpness_tiles=frame.get("sharpness_tiles"),
             clipped_hi=frame.get("clipped_hi"),
             clipped_lo=frame.get("clipped_lo"),
             horizon_angle=frame.get("horizon_angle"),

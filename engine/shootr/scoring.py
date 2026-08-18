@@ -252,6 +252,48 @@ def _sharpness(frame: FrameMeasurement) -> Component:
                              "sharpness_mean": frame.sharpness_mean})
 
 
+# Landscape focus-plane logic (design 04 §4.3): not "is the subject sharp"
+# but "does DoF cover the scene". Tile threshold relative to the frame's own
+# max — absolute Tenengrad is content-dependent.
+FOCUS_PLANE_TILE_FRACTION = 0.25  # tile "sharp" if ≥ this × frame max
+FOCUS_COVERAGE_CURVE = [(0.05, 0.2), (0.25, 0.6), (0.55, 1.0)]
+
+
+def _landscape_sharpness(frame: FrameMeasurement) -> Component:
+    """Replaces plain max-sharpness for the landscape profile: coverage of
+    the sharp plane plus corner softness, from the 16×16 tile map."""
+    tiles = frame.sharpness_tiles
+    if not tiles or frame.sharpness_max is None:
+        return _sharpness(frame)  # no map → fall back, never null a
+        # measurable frame
+    if frame.sharpness_max < MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS:
+        return Component(0.0, {"diagnosis": "motion_blur_or_shake",
+                               "sharpness_max": frame.sharpness_max})
+
+    flat = [v for row in tiles for v in row]
+    threshold = frame.sharpness_max * FOCUS_PLANE_TILE_FRACTION
+    coverage = sum(1 for v in flat if v >= threshold) / len(flat)
+
+    # Corner softness: mean of the four 2×2 corner blocks vs frame max.
+    n = len(tiles)
+    corners = []
+    for ys, xs in (((0, 2), (0, 2)), ((0, 2), (n - 2, n)),
+                   ((n - 2, n), (0, 2)), ((n - 2, n), (n - 2, n))):
+        block = [tiles[y][x] for y in range(*ys) for x in range(*xs)]
+        corners.append(sum(block) / len(block))
+    corner_ratio = (sum(corners) / 4) / frame.sharpness_max
+
+    value = _piecewise(coverage, FOCUS_COVERAGE_CURVE)
+    # Soft corners cap the score, they don't zero it: stopped-down lenses
+    # are still softer in corners; only severe falloff should hurt.
+    if corner_ratio < 0.05:
+        value = min(value, 0.7)
+    return Component(value, {
+        "focus_plane_coverage": round(coverage, 3),
+        "corner_ratio": round(corner_ratio, 3),
+        "sharpness_max": frame.sharpness_max})
+
+
 def _composition(flags: list[str]) -> Component:
     penalty = 0.0
     applied: dict[str, float] = {}
@@ -286,10 +328,36 @@ def _exposure(m: Measurements) -> Component:
 # Combination
 
 
+# Per-group profile hints (design 04 §4.4): renormalization within a
+# profile, not a new profile. Keeps one user-visible knob while avoiding
+# face metrics dominating a detail shot of the rings.
+GROUP_SHOT_FACES = 7  # > 6 faces → group-shot handling
+
+
+def _hint_weights(weights: dict[str, float], m: Measurements,
+                  profile: str) -> tuple[dict[str, float], str | None]:
+    if profile == "landscape":
+        return weights, None  # face metrics already absent
+    n_faces = len(m.faces)
+    if n_faces == 0 and ("eye_focus" in weights or "eyes_open" in weights):
+        # No faces in a face-weighted profile (venue/detail shot). The face
+        # metrics stay in the record as null (design 04 §5 contract — the
+        # UI shows "—" and why); null-redistribution already renormalizes
+        # the weights. The hint only NAMES the situation for the UI.
+        return weights, "no_faces_detail_shot"
+    if n_faces >= GROUP_SHOT_FACES and "composition" in weights:
+        # Group shot: composition (crops at frame edge) gains weight; the
+        # other_subject_blinking flag carries the rest (design 04 §2.2).
+        hinted = dict(weights)
+        hinted["composition"] = hinted.get("composition", 0) + 0.05
+        return hinted, "group_shot"
+    return weights, None
+
+
 def score(m: Measurements, profile: str) -> ScoreRecord:
     if profile not in PROFILE_WEIGHTS:
         raise ValueError(f"unknown profile: {profile!r}")
-    weights = PROFILE_WEIGHTS[profile]
+    weights, hint = _hint_weights(PROFILE_WEIGHTS[profile], m, profile)
 
     face, why = select_primary_subject(m)
 
@@ -299,7 +367,9 @@ def score(m: Measurements, profile: str) -> ScoreRecord:
     if "eyes_open" in weights:
         computed["eyes_open"] = _eyes_open(face)
     if "sharpness" in weights:
-        computed["sharpness"] = _sharpness(m.frame)
+        computed["sharpness"] = (_landscape_sharpness(m.frame)
+                                 if profile == "landscape"
+                                 else _sharpness(m.frame))
     if "composition" in weights:
         computed["composition"] = _composition(m.composition_flags)
     if "face_quality" in weights:
@@ -337,6 +407,8 @@ def score(m: Measurements, profile: str) -> ScoreRecord:
     primary = None
     if face is not None or m.faces or m.saliency_bbox:
         primary = {"face_idx": face.idx if face else None, "why": why}
+    if hint:
+        flags.append(f"profile_hint:{hint}")
 
     return ScoreRecord(
         total=round(total, 4),

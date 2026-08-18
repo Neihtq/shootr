@@ -5,7 +5,7 @@
  * no cull controls — the §04.6 guard made visible.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useGroups,
   useOverrideEntry,
@@ -16,6 +16,7 @@ import { thumbUrl } from "../api/client";
 import type { Group, Selection, SelectionState } from "../api/types";
 import { exifLine } from "../exif";
 import { CompareView } from "./CompareView";
+import { CompositionOverlay } from "./CompositionOverlay";
 import { EvidencePanel } from "./EvidencePanel";
 import { EyeCrops } from "./EyeCrops";
 import { SharpnessOverlay } from "./SharpnessOverlay";
@@ -43,6 +44,7 @@ export function GroupReview({
   const [groupIdx, setGroupIdx] = useState(0);
   const [frameIdx, setFrameIdx] = useState(0);
   const [showSharpness, setShowSharpness] = useState(false);
+  const [showComposition, setShowComposition] = useState(false);
   const [showEvidence, setShowEvidence] = useState(true);
   const [comparing, setComparing] = useState(false);
 
@@ -55,6 +57,18 @@ export function GroupReview({
   const group: Group | undefined = groups?.[groupIdx];
   const photoId = group?.photo_ids[frameIdx] ?? null;
   const { data: photo } = usePhoto(photoId);
+
+  // Thumbnail prefetch ±5 (design 11 §9): J/K scrubbing must not wait on
+  // decode round-trips. The browser cache does the storing; we just warm it.
+  useEffect(() => {
+    if (!group) return;
+    for (let d = -5; d <= 5; d++) {
+      const pid = group.photo_ids[frameIdx + d];
+      if (pid !== undefined && d !== 0) {
+        new Image().src = thumbUrl(pid, 2048);
+      }
+    }
+  }, [group, frameIdx]);
 
   const clampFrame = (g: Group | undefined, i: number) =>
     g ? Math.max(0, Math.min(g.photo_ids.length - 1, i)) : 0;
@@ -82,6 +96,7 @@ export function GroupReview({
     onToggleEvidence: () => setShowEvidence((v) => !v),
     onToggleSharpness: () => setShowSharpness((v) => !v),
     onToggleCompare: () => setComparing((v) => !v),
+    onToggleComposition: () => setShowComposition((v) => !v),
     onTogglePick: () => {
       const current = photoId !== null
         ? entryByPhoto.get(photoId)?.state : undefined;
@@ -201,6 +216,12 @@ export function GroupReview({
                     className="h-full w-full object-contain"
                   />
                   <SharpnessOverlay photoId={photoId} visible={showSharpness} />
+                  {photo && (
+                    <CompositionOverlay
+                      photo={photo}
+                      visible={showComposition}
+                    />
+                  )}
                 </>
               )}
             </div>

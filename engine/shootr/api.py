@@ -787,7 +787,8 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
             p = jobs.progress(c, job_id)
             return {"job_id": p.job_id, "kind": p.kind, "state": p.state,
                     "total": p.total, "completed": p.completed,
-                    "failed": p.failed}
+                    "failed": p.failed, "rate_per_sec": p.rate_per_sec,
+                    "eta_sec": p.eta_sec}
         finally:
             c.close()
 

@@ -209,3 +209,23 @@ def export_csv(entries: list[tuple[Path, str]], out: Path) -> None:
     lines = ["path,state"]
     lines += [f"{p},{s}" for p, s in entries if s in ("pick", "alt")]
     out.write_text("\n".join(lines) + "\n")
+
+
+def export_hardlinks(entries: list[tuple[Path, str]], dest: Path) -> int:
+    """Hardlink "Selects" folder (design 07 §3.2): no disk cost, no
+    duplication, works regardless of sidecar/DNG issues. Links picks only.
+    Same-volume constraint is inherent to hardlinks; cross-volume raises
+    and the caller reports it rather than silently copying gigabytes."""
+    dest.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for photo_path, state in entries:
+        if state != "pick" or not photo_path.is_file():
+            continue
+        link = dest / photo_path.name
+        if link.exists():
+            if link.stat().st_ino == photo_path.stat().st_ino:
+                continue  # already linked to this exact file
+            link = dest / f"{photo_path.stem}_{n}{photo_path.suffix}"
+        os.link(photo_path, link)
+        n += 1
+    return n

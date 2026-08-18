@@ -323,6 +323,48 @@ struct SharpnessOverlay: View {
     }
 }
 
+// MARK: - Composition overlay (design 11 §3): is this flag fair?
+
+struct CompositionOverlay: View {
+    let photo: PhotoDetail
+
+    var body: some View {
+        GeometryReader { geo in
+            // Rule-of-thirds grid
+            Path { p in
+                for i in 1...2 {
+                    let x = geo.size.width * CGFloat(i) / 3
+                    let y = geo.size.height * CGFloat(i) / 3
+                    p.move(to: CGPoint(x: x, y: 0))
+                    p.addLine(to: CGPoint(x: x, y: geo.size.height))
+                    p.move(to: CGPoint(x: 0, y: y))
+                    p.addLine(to: CGPoint(x: geo.size.width, y: y))
+                }
+            }
+            .stroke(.white.opacity(0.25), lineWidth: 1)
+
+            // Face boxes — Vision origin is bottom-left; SwiftUI top-left.
+            ForEach(photo.faces, id: \.idx) { f in
+                if f.bbox.count == 4 {
+                    let x = f.bbox[0] * geo.size.width
+                    let w = f.bbox[2] * geo.size.width
+                    let h = f.bbox[3] * geo.size.height
+                    let y = (1 - f.bbox[1] - f.bbox[3]) * geo.size.height
+                    Rectangle()
+                        .stroke(Theme.bracket.opacity(0.7), lineWidth: 1)
+                        .frame(width: w, height: h)
+                        .position(x: x + w / 2, y: y + h / 2)
+                    Text("face \(f.idx)")
+                        .font(Theme.micro)
+                        .foregroundStyle(Theme.bracket.opacity(0.9))
+                        .position(x: x + 20, y: max(6, y - 8))
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 /// Sizes overlay content to the letterboxed area a `.fit` image occupies —
 /// a heatmap over the whole container would misalign with the pixels.
 struct FittedOverlay<Content: View>: View {

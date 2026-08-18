@@ -626,6 +626,12 @@ struct LoupeView: View {
                                         SharpnessOverlay(photoId: pid)
                                     }
                                 }
+                                if model.showComposition,
+                                   let photo = model.photo {
+                                    FittedOverlay(imageSize: image.size) {
+                                        CompositionOverlay(photo: photo)
+                                    }
+                                }
                             }
                     }
                 } else {
@@ -647,6 +653,13 @@ struct LoupeView: View {
         }
         .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Trackpad pinch: in = 100% (face-snapped), out = fit (§12.4).
+        .gesture(
+            MagnifyGesture()
+                .onEnded { value in
+                    model.zoomed = value.magnification > 1
+                }
+        )
         .task(id: model.currentPhotoId) {
             guard let photo = model.photo,
                   loadedFor != photo.id || image == nil else { return }
@@ -934,6 +947,7 @@ struct KeyCatcher: NSViewRepresentable {
             case "e": model.showEvidence.toggle()
             case "z": model.zoomed.toggle()
             case "s": model.showSharpness.toggle()
+            case "o": model.showComposition.toggle()
             case "c":
                 if model.compareIds.count >= 2 { model.comparing.toggle() }
             default: return false

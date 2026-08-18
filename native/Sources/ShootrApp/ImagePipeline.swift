@@ -67,4 +67,21 @@ final class ImagePipeline {
     private func cost(of image: NSImage) -> Int {
         Int(image.size.width * image.size.height * 4)
     }
+
+    /// Warm the cache for J/K scrubbing (design 11 §9). ±2 full decodes —
+    /// heavier than web thumbnails, so a narrower window; NSCache eviction
+    /// bounds the memory. Serialized to avoid GPU contention with the
+    /// visible decode.
+    private var prefetchTask: Task<Void, Never>?
+
+    func prefetch(photos: [PhotoDetail], libraryRoot: String?) {
+        prefetchTask?.cancel()
+        prefetchTask = Task { [weak self] in
+            for photo in photos {
+                if Task.isCancelled { return }
+                _ = await self?.loupeImage(photo: photo,
+                                           libraryRoot: libraryRoot)
+            }
+        }
+    }
 }

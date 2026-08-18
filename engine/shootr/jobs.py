@@ -39,6 +39,8 @@ class Progress:
     total: int
     completed: int
     failed: int
+    rate_per_sec: float | None = None  # rolling, from recent updates
+    eta_sec: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +73,9 @@ def create_job(conn: sqlite3.Connection, shoot_id: int, kind: str,
             "VALUES (?, ?, 'pending')",
             [(job_id, pid) for pid in photo_ids],
         )
+    # Job ids repeat across separate databases (tests, reinstalls); a stale
+    # rate window from a previous job would corrupt the first ETA.
+    _rate_samples.pop(job_id, None)
     return job_id
 
 
@@ -201,6 +206,30 @@ def reset_stale_running(conn: sqlite3.Connection) -> int:
     return n
 
 
+# Rolling rate window (design 09 §5): a cumulative average lags badly after
+# a pause and produces visibly wrong ETAs. In-memory per-process is fine —
+# the rate is presentation, never state.
+_RATE_WINDOW_S = 60.0
+_rate_samples: dict[int, list[tuple[float, int]]] = {}
+
+
+def _rolling_rate(job_id: int, completed: int) -> float | None:
+    import time
+
+    now = time.monotonic()
+    samples = _rate_samples.setdefault(job_id, [])
+    samples.append((now, completed))
+    del samples[: max(0, len(samples) - 600)]  # bound memory
+    window = [(t, c) for t, c in samples if now - t <= _RATE_WINDOW_S]
+    if len(window) < 2:
+        return None
+    dt = window[-1][0] - window[0][0]
+    dc = window[-1][1] - window[0][1]
+    if dt <= 0 or dc <= 0:
+        return None
+    return dc / dt
+
+
 def progress(conn: sqlite3.Connection, job_id: int) -> Progress:
     job = conn.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
     failed = conn.execute(
@@ -208,7 +237,15 @@ def progress(conn: sqlite3.Connection, job_id: int) -> Progress:
         "WHERE job_id = ? AND state = 'failed'",
         (job_id,),
     ).fetchone()["n"]
+    total = job["total"] or 0
+    completed = job["completed"]
+    rate = eta = None
+    if job["state"] == "running":
+        rate = _rolling_rate(job_id, completed)
+        if rate and total > completed:
+            eta = int((total - completed) / rate)
     return Progress(
         job_id=job_id, kind=job["kind"], state=job["state"],
-        total=job["total"] or 0, completed=job["completed"], failed=failed,
+        total=total, completed=completed, failed=failed,
+        rate_per_sec=round(rate, 2) if rate else None, eta_sec=eta,
     )

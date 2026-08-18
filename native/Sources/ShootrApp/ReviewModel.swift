@@ -24,6 +24,7 @@ final class ReviewModel {
     /// on the primary face when zoomed.
     var zoomed = false
     var showSharpness = false  // S — 16×16 heatmap overlay
+    var showComposition = false  // O — face boxes + thirds grid
     var comparing = false  // C — synced compare sheet
     var showExport = false
     var showSettings = false
@@ -201,6 +202,25 @@ final class ReviewModel {
             return
         }
         photo = try? await api.photo(pid)
+        prefetchNeighbors()
+    }
+
+    /// Warm the loupe cache for the frames J/K will land on next.
+    private func prefetchNeighbors() {
+        guard let g = currentGroup else { return }
+        let candidates = [frameIndex + 1, frameIndex - 1,
+                          frameIndex + 2, frameIndex - 2]
+            .filter { g.photoIds.indices.contains($0) }
+            .map { g.photoIds[$0] }
+        guard !candidates.isEmpty else { return }
+        Task {
+            var details: [PhotoDetail] = []
+            for pid in candidates {
+                if let d = try? await api.photo(pid) { details.append(d) }
+            }
+            ImagePipeline.shared.prefetch(photos: details,
+                                          libraryRoot: libraryRoot)
+        }
     }
 
     // MARK: navigation — identical keybindings to the web client (§12.4)
