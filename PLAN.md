@@ -92,9 +92,10 @@ outcome and can be built now.
 - ~~Composition flag *detectors*: face_clipped, subject_near_edge, no_headroom,
   lead_room_inverted, horizon_tilt, thirds_distance — from analysis rows (§2.4)~~
 - `limb_cut_at_joint` detector — needs body-pose joints (deferred with pose requests)
-- Landscape focus-plane logic: `focus_plane_coverage`, plane location vs. EXIF,
-  corner softness (§4.3)
-- Per-group profile hints: face-count-based renormalization (§4.4)
+- ~~Landscape focus-plane logic: tile coverage + corner softness (§4.3)~~ — plane
+  location vs. EXIF cross-reference deferred to M2 (needs calibration data)
+- ~~Per-group profile hints: no-faces named + renormalized, group-shot composition
+  boost (§4.4)~~
 - ~~Bracket *detection*: ≥3 frames, <2 s, symmetric exposure-bias progression,
   near-identical embedding (§6)~~ — lives in `grouping.py` (it produces groups)
 
@@ -164,7 +165,7 @@ outcome and can be built now.
 - ~~SSE progress stream (`/api/jobs/stream`, `once=` snapshot mode for polling/tests)~~
 - ~~Background job runner (`runner.JobRunner` thread) wired to the analyze endpoint;
   stale-`running` reset on startup in `main()`~~
-- Rolling-rate/ETA fields in SSE payloads (counts stream now; rate math later)
+- ~~Rolling-rate/ETA in job progress (60 s window; job status endpoint)~~
 - ~~Group-correction *move* endpoint (brackets immutable; emptied source deleted)~~
 
 ### Lightroom selects writeback (`07 §3`)
@@ -174,7 +175,7 @@ outcome and can be built now.
 - ~~DNG detection → warn and skip (no embedded-XMP writes)~~
 - ~~Rejects write nothing by default~~
 - ~~CSV file-list export~~
-- Hardlink "Selects" folder option
+- ~~Hardlink "Selects" folder (`xmp.export_hardlinks`; API/UI hookup when wanted)~~
 - LrC-running + live-catalog refusal check (belongs with catalog *import*, M2)
 
 ### Web client (`11`)
@@ -196,9 +197,10 @@ outcome and can be built now.
 - ~~Compare view: 2–4 frames, one shared transform (synced pan/zoom), primary-face
   snap at 100%, keyboard 1–4/Z/Esc, per-pane eye-sharpness readout~~
 - ~~Shoot-proposal confirmation UI: editable name + profile picker per proposal~~
-- Composition overlay (face boxes/thirds grid on the main image)
+- ~~Composition overlay (O): thirds grid + face boxes — both clients~~
+- ~~Thumbnail prefetch for J/K scrubbing — both clients (web ±5 thumbs, native
+  ±2 loupe decodes)~~
 - TanStack Virtual for >1k-group lists (plain scroll fine at current scale)
-- Thumbnail prefetch (±5 frames) for J/K scrubbing
 
 ---
 
@@ -248,9 +250,11 @@ outcome and can be built now.
   read-metadata caveat~~
 - ~~Sharpness heatmap overlay (`S`), aligned to the fitted image~~
 - ~~Shoot settings sheet: rename + genre switch (instant rescore)~~
-- Trackpad pinch/pan gestures on the loupe
-- GPU throttling while an analyze job runs
-- Filmstrip prefetch; Quick Look / drag-out integration
+- ~~Trackpad pinch to zoom on the loupe~~
+- ~~Loupe prefetch (±2)~~
+- GPU throttling while an analyze job runs — deferred until the worker pool
+  exists (single-worker M1 can't contend with itself)
+- Quick Look / drag-out integration — post-M1 nicety
 
 ## M5 — Optional LrC Lua plugin
 
