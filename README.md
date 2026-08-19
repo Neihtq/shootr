@@ -20,7 +20,26 @@ and confirmed.
 - **Node 20+** — only for the web UI (optional; the native app covers
   everything)
 
-## Setup
+## Quick start — self-contained app
+
+```bash
+git clone git@github.com:Neihtq/shootr.git && cd shootr
+native/make-app.sh --bundled     # ~100 MB .app; downloads a relocatable
+                                 # Python on first run (cached in .cache/)
+open native/ShootrApp.app
+```
+
+Double-clicking the app starts everything: it launches its own embedded
+engine (or reuses one already running on port 8721) and stops it on quit.
+The web UI is served by the same engine at **http://127.0.0.1:8721/ui** —
+the URL is shown in the app header. No Python, Node, or terminal needed on
+the target machine; copy the `.app` to any Apple Silicon Mac and it runs.
+
+Building `--bundled` needs Node once (for the web UI build); plain
+`native/make-app.sh` skips all of that and expects the engine run from
+source, as below.
+
+## Setup (development, from source)
 
 ```bash
 git clone git@github.com:Neihtq/shootr.git && cd shootr
