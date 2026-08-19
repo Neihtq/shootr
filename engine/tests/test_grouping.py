@@ -20,6 +20,9 @@ T0 = datetime(2026, 6, 14, 15, 0, 0)
 EMB_A = (1.0, 0.0, 0.0)
 EMB_A2 = (0.999, 0.04, 0.0)
 EMB_B = (0.0, 1.0, 0.0)
+# Distance 0.15 from A: past the face-count corroboration threshold (0.10)
+# but still inside the same shot (SHOT_EMBEDDING_DIST 0.20).
+EMB_A_SHIFTED = (0.85, 0.53, 0.0)
 
 
 def photo(pid, seconds=0.0, subsec=0, bias=0.0, emb=EMB_A, faces=0,
@@ -110,9 +113,42 @@ class TestShotGrouping:
         photos = [photo(1, 0), photo(2, 0.5, emb=EMB_B)]
         assert len(group_shots(photos)) == 2
 
-    def test_face_count_change_splits(self):
-        photos = [photo(1, 0, faces=2), photo(2, 0.5, faces=3)]
+    def test_face_count_change_splits_when_framing_corroborates(self):
+        """People entering/leaving moves the framing too (§3)."""
+        photos = [photo(1, 0, faces=2),
+                  photo(2, 0.5, faces=3, emb=EMB_A_SHIFTED)]
         assert len(group_shots(photos)) == 2
+
+    def test_face_count_flicker_alone_does_not_split(self):
+        """Regression (user-reported: 'group 1 and 2 each have one picture but
+        they look similar'). Vision's face detector flickers between frames of
+        the same shot — on a real 1232-frame event shoot, 26% of
+        near-identical consecutive pairs disagreed on face count. Trusting it
+        uncorroborated turned 130 real groups into 527, which saves the user
+        nothing."""
+        photos = [photo(1, 0, faces=2), photo(2, 0.5, faces=3)]
+        assert len(group_shots(photos)) == 1
+
+    def test_same_setup_a_few_seconds_apart_stays_one_group(self):
+        """Regression, same report: an event photographer reshooting the same
+        setup every ~3.5 s was getting one group per frame at the old 3 s
+        gap. Near-identical frames sit p95 = 4.3 s apart on real files."""
+        photos = [photo(1, 0), photo(2, 3.6, emb=EMB_A2)]
+        assert len(group_shots(photos, profile="event")) == 1
+
+    def test_cumulative_drift_bounds_a_group(self):
+        """Sequential chaining compares each frame only to its predecessor,
+        so a pan can walk a group arbitrarily far from where it started (a
+        real 39-frame group spanned 0.354 first-to-last). Every frame is also
+        checked against the group's first."""
+        # Each step is ~0.01 — far inside SHOT_EMBEDDING_DIST, so the
+        # per-step check never fires — but they accumulate past 0.25.
+        drift = [(1.0, 0.0, 0.0), (0.99, 0.14, 0.0), (0.96, 0.28, 0.0),
+                 (0.92, 0.39, 0.0), (0.87, 0.49, 0.0), (0.81, 0.59, 0.0),
+                 (0.74, 0.67, 0.0), (0.66, 0.75, 0.0)]
+        photos = [photo(i + 1, i * 0.3, emb=e) for i, e in enumerate(drift)]
+        shots = group_shots(photos)
+        assert len(shots) > 1, "unbounded drift is over-merge (§3)"
 
     def test_subject_change_splits(self):
         photos = [photo(1, 0, faces=1, faceprint=EMB_A),

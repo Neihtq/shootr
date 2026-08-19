@@ -63,9 +63,12 @@ boundary condition fires:
 
 ```
 boundary if:
-     time_gap > 3 s                                   (shutter released)
+     time_gap > 8 s   [portrait/event]                (shutter released)
+                20 s  [landscape] · 5 s [street]
   OR embedding_distance > 0.20                        (framing/scene changed)
-  OR face_count changed                               (people entered/left)
+  OR embedding_distance(group_first_frame) > 0.25     (cumulative drift)
+  OR (face_count changed AND embedding_distance > 0.10)
+                                                      (people entered/left)
   OR primary_face_identity changed                    (different subject)
   OR pose_distance > 0.35   [portrait profile only]   (subject repositioned)
   OR is_bracket boundary                              (§04.6)
@@ -73,6 +76,28 @@ boundary if:
 
 `subsec` matters here (§02): without subsecond ordering, burst frames sharing a
 whole-second timestamp sort arbitrarily and sequential clustering breaks.
+
+**Two of those clauses are guarded, both measured on a real 1232-frame event shoot
+(2026-08) after it over-split into 527 groups with 282 singletons — half the shoot
+was one-frame groups, which saves the user nothing:**
+
+- **The face-count clause needs corroboration.** Vision's detector flickers between
+  frames of the same shot: 26% of near-identical consecutive pairs (distance ≤ 0.10,
+  ≤ 10 s apart) disagreed on face count, median delta 1, max 7. Uncorroborated, this
+  single clause turned 130 real groups into 527. Requiring the framing to have moved
+  too keeps real entrances and drops the flicker.
+- **The time gap alone must not cut a setup.** At 3 s it split 146 consecutive pairs
+  whose embeddings were near-identical. Frames that *are* near-identical sit p95 =
+  4.3 s / p99 = 12 s apart, so portrait/event needs ≥ 8 s. The embedding check is the
+  real gate; the gap only catches "walked away and came back".
+
+**Cumulative drift cap** (`0.25` against the group's *first* frame). Sequential
+chaining only ever compares neighbours, so a slow pan walks a group arbitrarily far
+from where it began — the same shoot produced a 39-frame group whose first and last
+frames were 0.354 apart, past the per-step gate that never fired. Looser than the
+per-step threshold: genuine burst drift is real, unbounded drift is over-merge.
+
+Result on that shoot: 204 groups, 35 singletons, median 3 frames.
 
 **Camera burst metadata** (Canon/Sony/Fuji drive-mode and frame-sequence tags) is a
 stronger signal than any inference when present — checked first, with the heuristics as

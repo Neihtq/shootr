@@ -229,7 +229,13 @@ final class ReviewModel {
             photo = nil
             return
         }
-        photo = try? await api.photo(pid)
+        // Stale-response guard: holding J down issues overlapping fetches and
+        // they can complete out of order, leaving the evidence panel and
+        // action bar describing a frame the user already moved past. Drop any
+        // response that is no longer the current frame.
+        let fetched = try? await api.photo(pid)
+        guard currentPhotoId == pid else { return }
+        photo = fetched
         prefetchNeighbors()
     }
 

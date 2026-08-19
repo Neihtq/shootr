@@ -23,13 +23,36 @@ SCENE_EMBEDDING_DIST = 0.45
 # (271 landscape frames, 2026-08): consecutive frames <10 s apart have
 # median embedding distance 0.020 — the embedding check is the real gate;
 # the time gap only needs to catch "walked away and came back".
+#
+# Raised for portrait/event after measuring a real 1232-frame event shoot
+# (2026-08): at 3 s the time gap alone split 146 consecutive pairs whose
+# embeddings were near-identical — a photographer shooting the same setup
+# every ~3.5 s got one group per frame, which saves them nothing. Frames
+# that ARE near-identical (dist <= 0.10) sit p95 = 4.3 s apart, p99 = 12 s,
+# so the gap has to clear ~12 s to stop cutting through single setups.
 SHOT_TIME_GAP_S: dict[str, float] = {
-    "portrait": 3.0,
-    "event": 3.0,
+    "portrait": 8.0,
+    "event": 8.0,
     "landscape": 20.0,
     "street": 5.0,
 }
 SHOT_EMBEDDING_DIST = 0.20
+# Cumulative drift cap. Sequential chaining compares each frame only to its
+# predecessor, so a slowly panning sequence can walk arbitrarily far from
+# where the group started: the same shoot produced a 39-frame group whose
+# first and last frames were 0.354 apart, well past the per-step gate. Every
+# frame is also checked against the group's FIRST frame, which bounds a
+# group to one recognizable setup. Looser than the per-step threshold —
+# genuine burst drift is real, unbounded drift is over-merge (design 05 §3).
+SHOT_ANCHOR_DIST = 0.25
+# A face-count change is only trusted as a boundary when the framing also
+# moved. Vision's detector flickers on the same shot — on the event shoot
+# above, 26% of near-identical consecutive pairs (dist <= 0.10, <= 10 s)
+# disagreed on face count, median delta 1, max 7. Treating that as "people
+# entered or left" was the single largest source of over-splitting: it alone
+# turned 130 real groups into 527. Corroboration keeps the signal for actual
+# entrances (where framing shifts too) and drops the flicker.
+SHOT_FACE_COUNT_CORROBORATION_DIST = 0.10
 POSE_DIST = 0.35
 
 BRACKET_MAX_GAP_S = 2.0
@@ -181,6 +204,7 @@ def group_shots(photos: list[PhotoFeatures],
     emitted_brackets: set[int] = set()
     current: Group | None = None
     prev: PhotoFeatures | None = None
+    anchor: PhotoFeatures | None = None  # first frame of `current`
 
     for cur in ordered:
         b = bracket_ids.get(cur.photo_id)
@@ -193,25 +217,36 @@ def group_shots(photos: list[PhotoFeatures],
                 ))
                 emitted_brackets.add(b)
             current = None  # bracket is also a shot boundary
+            anchor = None
             prev = cur
             continue
 
-        if current is None or prev is None or _shot_boundary(prev, cur, profile):
+        if current is None or prev is None \
+                or _shot_boundary(prev, cur, profile, anchor):
             current = Group("shot", [])
             groups.append(current)
+            anchor = cur  # first frame of the new group
         current.member_ids.append(cur.photo_id)
         prev = cur
 
     return groups
 
 
-def _shot_boundary(prev: PhotoFeatures, cur: PhotoFeatures, profile: str) -> bool:
+def _shot_boundary(prev: PhotoFeatures, cur: PhotoFeatures, profile: str,
+                   anchor: PhotoFeatures | None = None) -> bool:
+    """`anchor` is the group's first frame — see SHOT_ANCHOR_DIST. Passing
+    None disables the drift check (callers testing a single step)."""
     if _gap_s(prev, cur) > SHOT_TIME_GAP_S.get(profile, 3.0):
         return True  # shutter released
     if _dist(prev.embedding, cur.embedding) > SHOT_EMBEDDING_DIST:
         return True  # framing/scene changed
-    if prev.face_count != cur.face_count:
-        return True  # people entered/left
+    if anchor is not None and anchor.photo_id != prev.photo_id \
+            and _dist(anchor.embedding, cur.embedding) > SHOT_ANCHOR_DIST:
+        return True  # drifted too far from where this group started
+    if prev.face_count != cur.face_count and _dist(
+            prev.embedding, cur.embedding
+    ) > SHOT_FACE_COUNT_CORROBORATION_DIST:
+        return True  # people entered/left (framing corroborates it)
     if _dist(prev.primary_faceprint, cur.primary_faceprint) > PERSON_MERGE_DIST \
             and prev.primary_faceprint is not None \
             and cur.primary_faceprint is not None:

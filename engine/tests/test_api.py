@@ -134,6 +134,32 @@ class TestPipelineFlow:
         assert by_photo[5]["state"] == "reject"
         assert "eyes closed" in by_photo[5]["reason"]
 
+    def test_groups_and_members_come_back_in_capture_order(self, env):
+        """Photo ids come from ingest and do NOT ascend with capture time, so
+        an unordered query hands the client a filmstrip that scrubs out of
+        sequence — and `subsec` has to break ties between burst frames
+        sharing a whole second (design 05 §3)."""
+        client, lib = env
+        c = connect(client.app.state.db_path)
+        # Two frames in one second, inserted with ids descending against time.
+        c.execute("UPDATE photo SET captured_at = '2026-06-14T15:00:00', "
+                  "subsec = 900 WHERE id = 1")
+        c.execute("UPDATE photo SET captured_at = '2026-06-14T15:00:00', "
+                  "subsec = 100 WHERE id = 2")
+        c.commit(); c.close()
+        run_pipeline(client)
+
+        groups = client.get("/api/shoots/1/groups").json()
+        members = [pid for g in groups for pid in g["photo_ids"]]
+        c = connect(client.app.state.db_path)
+        order = {r["id"]: (r["captured_at"], r["subsec"]) for r in
+                 c.execute("SELECT id, captured_at, subsec FROM photo")}
+        c.close()
+        keys = [order[pid] for pid in members]
+        assert keys == sorted(keys), "filmstrip must scrub chronologically"
+        # Photo 2 (subsec 100) precedes photo 1 (subsec 900) despite the id.
+        assert members.index(2) < members.index(1)
+
     def test_override_and_regenerate(self, env):
         client, _ = env
         sel_id = run_pipeline(client)

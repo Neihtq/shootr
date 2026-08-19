@@ -674,8 +674,13 @@ struct LoupeView: View {
                                         SharpnessOverlay(photoId: pid)
                                     }
                                 }
+                                // Only draw face boxes when the detail on
+                                // hand belongs to the frame on screen —
+                                // otherwise the previous photo's boxes land
+                                // on this one during the fetch.
                                 if model.showComposition,
-                                   let photo = model.photo {
+                                   let photo = model.photo,
+                                   photo.id == loadedFor {
                                     FittedOverlay(imageSize: image.size) {
                                         CompositionOverlay(photo: photo)
                                     }
@@ -708,12 +713,33 @@ struct LoupeView: View {
                     model.zoomed = value.magnification > 1
                 }
         )
+        // Keyed on the id the view is asked to show, and it loads from THAT
+        // id — not from `model.photo`. Reading model.photo here raced: the
+        // task fires as soon as currentPhotoId changes (synchronous), while
+        // model.photo still holds the previous group's detail. The guard
+        // then saw loadedFor == photo.id, returned early, and nothing
+        // re-fired — leaving the previous group's image under a filmstrip
+        // that had already moved on.
         .task(id: model.currentPhotoId) {
-            guard let photo = model.photo,
-                  loadedFor != photo.id || image == nil else { return }
-            image = await ImagePipeline.shared.loupeImage(
-                photo: photo, libraryRoot: model.libraryRoot)
-            loadedFor = photo.id
+            guard let pid = model.currentPhotoId else {
+                image = nil
+                loadedFor = nil
+                return
+            }
+            if loadedFor == pid, image != nil { return }
+            // Clear first: showing the old frame while the new one decodes
+            // is how a wrong-photo read happens in the first place.
+            image = nil
+            let detail = model.photo?.id == pid
+                ? model.photo
+                : try? await model.api.photo(pid)
+            guard let detail, !Task.isCancelled else { return }
+            let loaded = await ImagePipeline.shared.loupeImage(
+                photo: detail, libraryRoot: model.libraryRoot)
+            // A newer frame may have been selected while this decoded.
+            guard !Task.isCancelled, model.currentPhotoId == pid else { return }
+            image = loaded
+            loadedFor = pid
             dragOffset = .zero
             panBase = .zero
         }

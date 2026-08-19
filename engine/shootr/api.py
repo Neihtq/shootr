@@ -576,13 +576,27 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
     def groups(shoot_id: int):
         c = conn()
         try:
+            # Both orderings are chronological, not by id. Groups are built
+            # sequentially so group id order usually matches capture order,
+            # but photo ids come from ingest (hash-keyed, parallel-scanned)
+            # and do NOT: a filmstrip ordered by id scrubs out of sequence,
+            # and burst frames sharing a whole second need `subsec` to break
+            # the tie (design 05 §3).
             out = []
             for g in c.execute(
-                'SELECT * FROM "group" WHERE shoot_id = ? AND level = ?',
+                'SELECT g.* FROM "group" g WHERE g.shoot_id = ? '
+                "AND g.level = ? ORDER BY ("
+                "  SELECT MIN(p.captured_at || '/' || printf('%06d', "
+                "    COALESCE(p.subsec, 0))) "
+                "  FROM group_member gm JOIN photo p ON p.id = gm.photo_id "
+                "  WHERE gm.group_id = g.id), g.id",
                 (shoot_id, "shot"),
             ):
                 members = [r["photo_id"] for r in c.execute(
-                    "SELECT photo_id FROM group_member WHERE group_id = ?",
+                    "SELECT gm.photo_id FROM group_member gm "
+                    "JOIN photo p ON p.id = gm.photo_id "
+                    "WHERE gm.group_id = ? "
+                    "ORDER BY p.captured_at, COALESCE(p.subsec, 0), p.id",
                     (g["id"],))]
                 out.append({"id": g["id"], "level": g["level"],
                             "is_bracket": bool(g["is_bracket"]),
