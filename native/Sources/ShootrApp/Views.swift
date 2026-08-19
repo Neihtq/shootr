@@ -31,6 +31,10 @@ struct ShootListView: View {
                 Text("Shootr")
                     .font(Theme.heading)
                     .foregroundStyle(Theme.ink)
+                Text("web UI: http://127.0.0.1:8721/ui")
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+                    .textSelection(.enabled)
                 Spacer()
                 if let status = model.analyzeStatus {
                     HStack(spacing: 5) {

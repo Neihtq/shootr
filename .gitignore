@@ -26,3 +26,6 @@ samples/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Bundled-app build cache (embedded Python tarball)
+.cache/

@@ -80,7 +80,8 @@ class MoveIn(BaseModel):
 
 def create_app(db_path: str | Path, backup_dir: str | Path,
                cache_dir: str | Path | None = None,
-               runner: JobRunner | None = None) -> FastAPI:
+               runner: JobRunner | None = None,
+               web_dist: str | Path | None = None) -> FastAPI:
     app = FastAPI(title="shootr", docs_url=None, redoc_url=None)
     app.state.db_path = str(db_path)
     app.state.backup_dir = Path(backup_dir)
@@ -801,7 +802,35 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
         finally:
             c.close()
 
+    # -- static web UI ---------------------------------------------------------
+    # The built Vite app is a static bundle; serving it here removes the
+    # Node dependency at runtime (bundled-app mode). /api keeps priority —
+    # routes are matched before the mount.
+    if web_dist and Path(web_dist).is_dir():
+        from fastapi.responses import RedirectResponse
+        from fastapi.staticfiles import StaticFiles
+
+        @app.get("/")
+        def root_redirect():
+            return RedirectResponse("/ui/")
+
+        app.mount("/ui", StaticFiles(directory=str(web_dist), html=True),
+                  name="ui")
+
     return app
+
+
+def _default_web_dist() -> Path | None:
+    """Locate a built web UI: bundled Resources first (relative to the
+    embedded engine), then the repo checkout for development."""
+    candidates = [
+        Path(__file__).resolve().parents[2] / "web-dist",  # app bundle
+        Path(__file__).resolve().parents[2] / "web" / "dist",  # repo
+    ]
+    for c in candidates:
+        if (c / "index.html").is_file():
+            return c
+    return None
 
 
 def main() -> None:
@@ -820,7 +849,8 @@ def main() -> None:
         print(f"reset {n} stale running items from a previous session")
 
     app = create_app(db_path, app_dir / "backups",
-                     runner=JobRunner(db_path))
+                     runner=JobRunner(db_path),
+                     web_dist=_default_web_dist())
     uvicorn.run(app, host="127.0.0.1", port=8721)
 
 
