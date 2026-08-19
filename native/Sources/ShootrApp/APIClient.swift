@@ -101,10 +101,42 @@ struct Shoot: Codable, Identifiable {
     let profile: String
     let photoCount: Int
     let latestSelectionId: Int?
+    let analyzedCount: Int
+    /// Non-nil while analysis/culling is in flight. Server-derived, so it
+    /// survives a relaunch and agrees with the web UI.
+    let busyJobId: Int?
+    /// Why a stopped analyze job stopped (`volume_offline`, `helper_failed`,
+    /// `interrupted_restart`). Non-nil means partial work is checkpointed
+    /// and re-running resumes it — never shown as "not culled yet".
+    let stoppedReason: String?
+
+    /// Opening a shoot mid-cull shows an empty or half-built review — there
+    /// are no groups until the chained steps run.
+    var isBusy: Bool { busyJobId != nil }
+    /// Culled at least once, so there is something to browse.
+    var isReviewable: Bool { !isBusy && latestSelectionId != nil }
+    /// Stopped partway with work banked: the action resumes, not restarts.
+    var isStopped: Bool { !isBusy && stoppedReason != nil }
+
+    /// Stop reason in the user's terms. An unrecognized reason renders as
+    /// itself rather than disappearing — silence reads as "nothing happened".
+    var stoppedLabel: String? {
+        switch stoppedReason {
+        case nil: return nil
+        case "volume_offline": return "paused — drive disconnected"
+        case "helper_failed": return "stopped — analysis error"
+        case "interrupted_restart": return "stopped — app restarted"
+        case let other: return other
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, name, profile
         case photoCount = "photo_count"
         case latestSelectionId = "latest_selection_id"
+        case analyzedCount = "analyzed_count"
+        case busyJobId = "busy_job_id"
+        case stoppedReason = "stopped_reason"
     }
 }
 

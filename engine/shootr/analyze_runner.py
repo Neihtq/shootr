@@ -29,8 +29,17 @@ def run_analyze_job(
     scale: float = 0.5,
     analyzer: Analyzer | None = None,
     volume_check: Callable[[], bool] | None = None,
+    finalize: Callable[[], None] | None = None,
 ) -> jobs.Progress:
-    """Drain the job. Safe to call repeatedly: resume = re-call."""
+    """Drain the job. Safe to call repeatedly: resume = re-call.
+
+    `finalize` runs after the last measurement but *before* the job is
+    marked done — it's where grouping/scoring/selection happen. Ordering
+    matters to clients: they treat a pending/running job as "don't open
+    this shoot yet", and between analysis ending and the selection
+    existing there is nothing to review. Marking done first would open
+    that window.
+    """
     analyzer = analyzer or helper.analyze_batch
     volume_check = volume_check or library_root.is_dir
 
@@ -96,6 +105,8 @@ def run_analyze_job(
         for p in orphans:
             jobs.fail_item(conn, job_id, p, "photo_row_missing")
 
+    if finalize:
+        finalize()
     jobs.finish_job(conn, job_id)
     return jobs.progress(conn, job_id)
 

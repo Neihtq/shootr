@@ -71,6 +71,17 @@ final class ReviewModel {
         do {
             shoots = try await api.shoots()
             libraries = try await api.libraries()
+            // Adopt a job already running in the engine — started before a
+            // relaunch, or by the web UI. Without this the card would stay
+            // locked until something else refreshed the list.
+            if analyzingShootId == nil,
+               let busy = shoots.first(where: \.isBusy),
+               let jobId = busy.busyJobId {
+                analyzingShootId = busy.id
+                analyzeProgress = (busy.analyzedCount, busy.photoCount)
+                analyzeStatus = "analyzing…"
+                Task { await self.watchJob(jobId) }
+            }
             // Surface pending proposals for the first library that has any.
             proposals = []
             proposalsFor = nil
@@ -171,7 +182,14 @@ final class ReviewModel {
         }
     }
 
+    /// Job ids already being polled — `loadHome()` adopts running jobs, and
+    /// `watchJob` calls it, so without this a single job could accumulate
+    /// watchers on every refresh.
+    private var watchedJobs: Set<Int> = []
+
     private func watchJob(_ jobId: Int) async {
+        guard watchedJobs.insert(jobId).inserted else { return }
+        defer { watchedJobs.remove(jobId) }
         while true {
             try? await Task.sleep(for: .seconds(1))
             guard let s = try? await api.jobStatus(jobId) else { continue }

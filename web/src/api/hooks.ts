@@ -26,7 +26,14 @@ export const useLibraries = () =>
   useQuery({ queryKey: ["libraries"], queryFn: () => get<Library[]>("/api/libraries") });
 
 export const useShoots = () =>
-  useQuery({ queryKey: ["shoots"], queryFn: () => get<Shoot[]>("/api/shoots") });
+  useQuery({
+    queryKey: ["shoots"],
+    queryFn: () => get<Shoot[]>("/api/shoots"),
+    // While any shoot is busy, keep the list fresh so its card unlocks on
+    // its own — including a job this tab didn't start. Idle: no polling.
+    refetchInterval: (q) =>
+      q.state.data?.some((s) => s.busy_job_id !== null) ? 2000 : false,
+  });
 
 export const useShootProposals = (libraryId: number | null) =>
   useQuery({

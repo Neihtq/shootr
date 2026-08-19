@@ -18,7 +18,7 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import db, pipeline
+from . import db, jobs, pipeline
 from .analyze_runner import run_analyze_job
 
 
@@ -65,13 +65,16 @@ class JobRunner:
                 if req is None:
                     return
                 try:
-                    progress = run_analyze_job(conn, req.job_id,
-                                               req.library_root)
                     # Chain the cheap derived steps once measurements exist.
                     # Firing them any earlier is a race: score joins analysis
                     # and would silently produce nothing (observed on the
                     # first real-photo run).
-                    if progress.state in ("done", "failed"):
+                    #
+                    # Passed as `finalize` so it runs while the job is still
+                    # marked running: clients gate "can I open this shoot?"
+                    # on that, and a shoot with measurements but no selection
+                    # has nothing to show.
+                    def finalize() -> None:
                         shoot = conn.execute(
                             "SELECT shoot_id FROM job WHERE id = ?",
                             (req.job_id,)).fetchone()
@@ -80,9 +83,22 @@ class JobRunner:
                             pipeline.group_shoot(conn, sid)
                             pipeline.score_shoot(conn, sid)
                             pipeline.create_selection(conn, sid)
+
+                    run_analyze_job(conn, req.job_id, req.library_root,
+                                    finalize=finalize)
                 except Exception:
                     # The job's items are already requeued/failed by the
                     # analyze runner; record for /api/health visibility.
                     self._last_error = traceback.format_exc(limit=3)
+                    # But the job row itself is still 'running' with no
+                    # error, and nothing will resubmit it. Clients gate
+                    # "can I open this shoot?" on that row, so leaving it
+                    # would lock the shoot permanently — worse than the
+                    # hang it replaced. Mark it stopped-but-retryable.
+                    try:
+                        jobs.interrupt_job(conn, req.job_id,
+                                           "helper_failed")
+                    except Exception:  # noqa: BLE001 — DB gone; the
+                        pass           # startup sweep is the backstop
         finally:
             conn.close()

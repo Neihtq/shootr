@@ -160,6 +160,102 @@ class TestPipelineFlow:
         shoots = client.get("/api/shoots").json()
         assert shoots[0]["latest_selection_id"] is not None
 
+    def test_busy_job_id_gates_opening_a_shoot(self, env):
+        """Clients must not let the user open a shoot mid-cull: there are no
+        groups or scores until the chained steps run. Server-derived so a
+        relaunch or the other frontend agrees."""
+        client, lib = env
+        assert client.get("/api/shoots").json()[0]["busy_job_id"] is None
+
+        c = connect(client.app.state.db_path)
+        c.execute(
+            "INSERT INTO job (id, shoot_id, kind, state, total, completed, "
+            "created_at, updated_at) VALUES "
+            "(99, 1, 'analyze', 'running', 10, 3, datetime('now'), "
+            "datetime('now'))")
+        c.commit()
+        assert client.get("/api/shoots").json()[0]["busy_job_id"] == 99
+
+        # Finished → open again.
+        c.execute("UPDATE job SET state = 'done' WHERE id = 99")
+        c.commit()
+        assert client.get("/api/shoots").json()[0]["busy_job_id"] is None
+
+        # A job paused by an offline volume is pending but NOT progressing.
+        # Treating it as busy would lock the shoot while the drive is out.
+        c.execute("UPDATE job SET state = 'pending', error = 'volume_offline' "
+                  "WHERE id = 99")
+        c.commit(); c.close()
+        assert client.get("/api/shoots").json()[0]["busy_job_id"] is None
+
+    def test_crashed_job_does_not_lock_the_shoot_forever(self, env):
+        """The gate's failure mode. A helper crash/stall leaves the job row
+        'running'; nothing resubmits it, so a NULL error would keep the card
+        locked with no worker draining it — worse than the hang it replaced.
+        `interrupt_job` records why it stopped, which releases the gate."""
+        from shootr import jobs
+
+        client, _ = env
+        c = connect(client.app.state.db_path)
+        c.execute(
+            "INSERT INTO job (id, shoot_id, kind, state, total, completed, "
+            "created_at, updated_at) VALUES "
+            "(77, 1, 'analyze', 'running', 5, 2, datetime('now'), "
+            "datetime('now'))")
+        c.commit()
+        assert client.get("/api/shoots").json()[0]["busy_job_id"] == 77
+
+        jobs.interrupt_job(c, 77, "helper_failed")
+        c.close()
+        s = client.get("/api/shoots").json()[0]
+        assert s["busy_job_id"] is None
+        # Unlocked, but not misreported as never-analyzed: the clients show
+        # the reason and offer Resume.
+        assert s["stopped_reason"] == "helper_failed"
+
+    def test_restart_does_not_lock_the_shoot(self, env):
+        """Same hazard via the startup sweep: reset_stale_running returns the
+        job to 'pending', but nothing resubmits it on boot."""
+        from shootr import jobs
+
+        client, _ = env
+        c = connect(client.app.state.db_path)
+        c.execute(
+            "INSERT INTO job (id, shoot_id, kind, state, total, completed, "
+            "created_at, updated_at) VALUES "
+            "(78, 1, 'analyze', 'running', 5, 2, datetime('now'), "
+            "datetime('now'))")
+        c.commit()
+        jobs.reset_stale_running(c)
+        c.close()
+        assert client.get("/api/shoots").json()[0]["busy_job_id"] is None
+
+    def test_interrupted_job_resumes_instead_of_409(self, env):
+        """Unlocking the card is only useful if the user can act on it: the
+        retry must resume the interrupted job, not collide with it."""
+        from shootr import jobs
+
+        client, lib = env
+        (lib / "IMG_9.CR3").write_bytes(b"x" * 100)
+        c = connect(client.app.state.db_path)
+        c.execute(
+            "INSERT INTO photo (id, library_id, shoot_id, content_id, "
+            "rel_path, filename, file_size, mtime) "
+            "VALUES (9, 1, 1, 'c9', 'IMG_9.CR3', 'IMG_9.CR3', 1, 0)")
+        c.commit(); c.close()
+
+        first = client.post("/api/shoots/1/analyze").json()["job_id"]
+        c = connect(client.app.state.db_path)
+        jobs.interrupt_job(c, first, "helper_failed")
+        c.close()
+
+        r = client.post("/api/shoots/1/analyze")
+        assert r.status_code == 200
+        assert r.json()["job_id"] == first  # resumed, not a duplicate
+        # Back in flight → gated again, and the checkpoint is intact.
+        s = client.get("/api/shoots").json()[0]
+        assert s["busy_job_id"] == first
+
     def test_job_conflict_is_409(self, env):
         client, lib = env
         (lib / "IMG_9.CR3").write_bytes(b"x" * 100)

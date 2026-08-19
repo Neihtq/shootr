@@ -8,6 +8,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from shootr import helper
 from shootr.api import create_app
 from shootr.db import connect
 from shootr.runner import JobRunner
@@ -204,6 +205,43 @@ class TestRunnerWiring:
         assert scores == 6, "scoring must run AFTER analysis lands"
         assert entries == 6, "selection must cover all photos"
         assert shoots[0]["latest_selection_id"] is not None
+
+    def test_stalled_helper_releases_the_shoot_gate(self, env, monkeypatch):
+        """End-to-end version of the lock hazard: the helper hangs, the
+        watchdog kills it, and the shoot must NOT stay busy — otherwise the
+        card the gate disabled can never be opened or retried again."""
+        client, db_path, lib = env
+
+        def stalling_analyze(files, scale=0.5):
+            yield {"path": str(files[0]), "decode_mode": "scaled",
+                   "engine_version": "test",
+                   "frame": {"sharpness_max": 0.5, "sharpness_mean": 0.2}}
+            raise helper.HelperStalled("no output for 120s")
+
+        import shootr.analyze_runner as ar
+        monkeypatch.setattr(ar.helper, "analyze_batch", stalling_analyze)
+
+        runner = JobRunner(db_path)
+        client.app.state.runner = runner
+        runner.start()
+        try:
+            job_id = client.post("/api/shoots/1/analyze").json()["job_id"]
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                if client.get("/api/shoots").json()[0]["busy_job_id"] is None:
+                    break
+                time.sleep(0.05)
+        finally:
+            runner.stop()
+
+        assert client.get("/api/shoots").json()[0]["busy_job_id"] is None, \
+            "a stalled helper must not leave the shoot permanently locked"
+        # The one result before the stall is banked, not lost.
+        c = connect(db_path)
+        assert c.execute("SELECT COUNT(*) FROM analysis").fetchone()[0] == 1
+        c.close()
+        # And the user can retry: it resumes the same job.
+        assert client.post("/api/shoots/1/analyze").json()["job_id"] == job_id
 
 
 class TestSSE:

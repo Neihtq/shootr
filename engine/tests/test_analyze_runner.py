@@ -103,6 +103,36 @@ def test_crash_mid_batch_banks_partial_results(conn):
     assert p.state == "done" and p.completed == 6
 
 
+def test_finalize_runs_before_the_job_is_marked_done(conn):
+    """Ordering the clients depend on: they gate "can I open this shoot?"
+    on the job still being pending/running. If the job flipped to done
+    before grouping/scoring/selection ran, the card would unlock onto a
+    shoot with measurements but nothing to review."""
+    states = []
+
+    def finalize():
+        states.append(
+            conn.execute("SELECT state FROM job WHERE id = ?",
+                         (job,)).fetchone()["state"])
+
+    job = create_job(conn, 1, "analyze", [1, 2, 3])
+    p = run_analyze_job(conn, job, ROOT, analyzer=happy_analyzer,
+                        volume_check=lambda: True, finalize=finalize)
+    assert states == ["running"]  # not yet done when finalize ran
+    assert p.state == "done"
+
+
+def test_finalize_skipped_when_volume_goes_offline(conn):
+    """A paused job hasn't finished: deriving a selection from a partial
+    analysis would present it as a complete cull."""
+    called = []
+    job = create_job(conn, 1, "analyze", [1, 2, 3])
+    p = run_analyze_job(conn, job, ROOT, analyzer=happy_analyzer,
+                        volume_check=lambda: False,
+                        finalize=lambda: called.append(1))
+    assert p.state == "pending" and called == []
+
+
 def test_volume_offline_pauses_before_batch(conn):
     job = create_job(conn, 1, "analyze", [1, 2, 3, 4, 5, 6])
     p = run_analyze_job(conn, job, ROOT, analyzer=happy_analyzer,

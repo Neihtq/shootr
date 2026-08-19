@@ -167,6 +167,30 @@ def pause_job(conn: sqlite3.Connection, job_id: int, reason: str) -> None:
         )
 
 
+def interrupt_job(conn: sqlite3.Connection, job_id: int, reason: str) -> None:
+    """The helper crashed or stalled and the runner is giving up this pass.
+
+    Distinct from `pause_job` (drive unplugged, will resume on its own) and
+    from `finish_job` (drained). Items were already requeued by the analyze
+    runner, so the work is not lost — but the JOB must not stay 'running'
+    with a NULL error, because clients derive "this shoot is busy" from
+    exactly that and would keep the shoot locked with no worker draining it
+    and no way for the user to retry. `error` set + state 'pending' means
+    "stopped, retryable, not in flight".
+    """
+    with conn:
+        conn.execute(
+            "UPDATE job_item SET state = 'pending' "
+            "WHERE job_id = ? AND state = 'running'",
+            (job_id,),
+        )
+        conn.execute(
+            "UPDATE job SET state = 'pending', error = ?, updated_at = ? "
+            "WHERE id = ?",
+            (reason, _now(), job_id),
+        )
+
+
 def cancel_job(conn: sqlite3.Connection, job_id: int) -> None:
     """Completed work is kept — analysis rows are valid regardless of whether
     the job that produced them finished (design 09 §6)."""
@@ -193,13 +217,20 @@ def finish_job(conn: sqlite3.Connection, job_id: int) -> None:
 
 def reset_stale_running(conn: sqlite3.Connection) -> int:
     """Startup recovery (design 09 §4): items claimed by a worker that no
-    longer exists are indistinguishable from in-progress without this."""
+    longer exists are indistinguishable from in-progress without this.
+
+    The reset job also gets `error` set. Nothing resubmits it on startup, so
+    a NULL error would read as "busy" to the clients that gate shoot
+    navigation on it — locking the shoot until the user thought to re-run.
+    Recording why it stopped is what makes it retryable instead.
+    """
     with conn:
         cur = conn.execute(
             "UPDATE job_item SET state = 'pending' WHERE state = 'running'")
         n = cur.rowcount
         conn.execute(
-            "UPDATE job SET state = 'pending', updated_at = ? "
+            "UPDATE job SET state = 'pending', updated_at = ?, "
+            "error = COALESCE(error, 'interrupted_restart') "
             "WHERE state = 'running'",
             (_now(),),
         )

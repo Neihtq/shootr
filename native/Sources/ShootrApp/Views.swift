@@ -229,6 +229,13 @@ struct ShootCard: View {
     let action: () -> Void
     @State private var hovering = false
 
+    /// Busy = work in flight, per the engine. Local `progress` is the
+    /// live-polled view of the same thing; either one means "not yet".
+    private var busy: Bool { shoot.isBusy || progress != nil }
+    /// Nothing culled yet and nothing running: the only useful action is
+    /// "Analyze & cull", so opening it would show an empty review.
+    private var openable: Bool { !busy && shoot.latestSelectionId != nil }
+
     var body: some View {
         Button(action: action) {
             VStack(spacing: 10) {
@@ -236,7 +243,8 @@ struct ShootCard: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(shoot.name)
                             .font(Theme.heading)
-                            .foregroundStyle(Theme.ink)
+                            .foregroundStyle(openable ? Theme.ink
+                                             : Theme.inkSecondary)
                         HStack(spacing: 6) {
                             Text(shoot.profile)
                                 .font(Theme.micro)
@@ -247,42 +255,78 @@ struct ShootCard: View {
                             Text("\(shoot.photoCount) photos")
                                 .font(Theme.caption)
                                 .foregroundStyle(Theme.inkSecondary)
-                            if shoot.latestSelectionId != nil,
-                               progress == nil {
+                            if busy {
+                                HStack(spacing: 4) {
+                                    ProgressView().controlSize(.mini)
+                                    Text("culling — opens when done")
+                                        .font(Theme.caption)
+                                        .foregroundStyle(Theme.inkSecondary)
+                                }
+                            } else if let stopped = shoot.stoppedLabel {
+                                // Analysis stopped partway. The work is
+                                // checkpointed, so report it plainly instead
+                                // of showing hours of analysis as nothing.
+                                Text("\(stopped) "
+                                     + "(\(shoot.analyzedCount)/"
+                                     + "\(shoot.photoCount) analyzed)")
+                                    .font(Theme.caption)
+                                    .foregroundStyle(Theme.warning)
+                            } else if shoot.latestSelectionId != nil {
                                 HStack(spacing: 4) {
                                     StateSwatch(color: Theme.pick)
                                     Text("culled")
                                         .font(Theme.caption)
                                         .foregroundStyle(Theme.inkSecondary)
                                 }
+                            } else {
+                                Text("not culled yet")
+                                    .font(Theme.caption)
+                                    .foregroundStyle(Theme.inkMuted)
                             }
                         }
                     }
                     Spacer()
-                    if progress == nil, let onAnalyze {
-                        Button(shoot.latestSelectionId == nil
+                    if !busy, let onAnalyze {
+                        Button(shoot.isStopped ? "Resume"
+                               : shoot.latestSelectionId == nil
                                ? "Analyze & cull" : "Re-cull") {
                             onAnalyze()
                         }
                         .font(Theme.caption)
                         .buttonStyle(.bordered)
                     }
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.inkMuted)
+                    // No affordance when there is nowhere to go.
+                    if openable {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
                 }
                 if let p = progress {
                     AnalyzeProgressBar(completed: p.completed, total: p.total)
+                } else if busy {
+                    // Busy per the engine but this client isn't the one
+                    // polling (relaunched, or the web UI started it) —
+                    // show indeterminate rather than a stale bar.
+                    AnalyzeProgressBar(
+                        completed: shoot.analyzedCount, total: shoot.photoCount)
                 }
             }
             .padding(14)
             .background(
-                hovering ? Theme.surfaceRaised : Theme.surface,
+                hovering && openable ? Theme.surfaceRaised : Theme.surface,
                 in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!openable)
         .onHover { hovering = $0 }
+        .help(busy ? "Culling in progress — the shoot opens when it finishes"
+              : openable ? "Open for review"
+              : shoot.isStopped
+                ? "Analysis stopped partway — Resume continues where it "
+                  + "left off"
+              : "Run Analyze & cull first")
     }
 }
 

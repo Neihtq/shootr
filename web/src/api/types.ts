@@ -101,6 +101,13 @@ export interface Shoot {
   photo_count: number;
   analyzed_count: number;
   latest_selection_id: number | null;
+  /** Non-null while analysis/culling is in flight. Server-derived, so it
+   * survives a reload and agrees with the native app. */
+  busy_job_id: number | null;
+  /** Why a stopped analyze job stopped (`volume_offline`, `helper_failed`,
+   * `interrupted_restart`). Non-null means partial work is checkpointed and
+   * re-running resumes it — never presented as "not culled yet". */
+  stopped_reason: string | null;
 }
 
 export interface Library {

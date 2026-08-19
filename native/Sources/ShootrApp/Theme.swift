@@ -27,6 +27,12 @@ enum Theme {
     static let bracket = Color(hex: 0xE5B45B)
     static let override_ = Color(hex: 0xB88CF0)
 
+    // Status — reserved for app state (a job stopped, a drive vanished),
+    // never for a cull verdict or a series. Kept distinct from `bracket`
+    // so an amber card badge can't be misread as "this is a bracket set",
+    // and always paired with words, never color alone.
+    static let warning = Color(hex: 0xD99A3E)
+
     // Meters (evidence bars): one hue, fill + lighter track of the same ramp.
     static let meterFill = Color(hex: 0x8B8B96)
     static let meterTrack = Color(hex: 0x2A2A2F)

@@ -257,6 +257,21 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
 
     @app.get("/api/shoots")
     def list_shoots():
+        """`busy_job_id` marks shoots with work in flight.
+
+        Derived from the job table, not tracked per client: a shoot that is
+        mid-analysis has no groups or scores yet, so opening it shows an
+        empty or half-built review. Clients gate navigation on this, and
+        because it is server state a reload or the other frontend sees the
+        same thing.
+
+        A job stopped by an offline volume, a helper crash/stall, or a
+        restart also sits in 'pending' but is NOT progressing — treating it
+        as busy would lock the shoot indefinitely with no worker draining
+        it. `error IS NULL` excludes those, and `stopped_reason` reports
+        them instead, so the clients can offer a resume rather than
+        pretending the shoot was never analyzed.
+        """
         c = conn()
         try:
             return [
@@ -266,7 +281,14 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                     "  AS latest_selection_id, "
                     "(SELECT COUNT(*) FROM photo p2 "
                     " JOIN analysis a ON a.photo_id = p2.id "
-                    " WHERE p2.shoot_id = s.id) AS analyzed_count "
+                    " WHERE p2.shoot_id = s.id) AS analyzed_count, "
+                    "(SELECT MAX(id) FROM job WHERE shoot_id = s.id "
+                    " AND state IN ('pending','running') "
+                    " AND error IS NULL) AS busy_job_id, "
+                    "(SELECT error FROM job WHERE shoot_id = s.id "
+                    " AND kind = 'analyze' AND state = 'pending' "
+                    " AND error IS NOT NULL "
+                    " ORDER BY id DESC LIMIT 1) AS stopped_reason "
                     "FROM shoot s "
                     "LEFT JOIN photo p ON p.shoot_id = s.id GROUP BY s.id")
             ]
@@ -479,10 +501,26 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                 "SELECT id FROM photo WHERE shoot_id = ? AND missing = 0 "
                 "AND id NOT IN (SELECT photo_id FROM analysis)",
                 (shoot_id,))]
-            try:
-                job_id = jobs.create_job(c, shoot_id, "analyze", ids)
-            except jobs.JobConflict as e:
-                raise error(409, "job_conflict", str(e))
+            # A job stopped by a helper crash/stall, an offline drive, or a
+            # restart stays 'pending' with `error` set. It's the same work,
+            # already checkpointed per photo — resume it rather than 409ing.
+            # Without this, "Analyze & cull" on an interrupted shoot is a
+            # permanent conflict and the user has no way forward.
+            stopped = c.execute(
+                "SELECT id FROM job WHERE shoot_id = ? AND kind = 'analyze' "
+                "AND state = 'pending' AND error IS NOT NULL "
+                "ORDER BY id DESC LIMIT 1", (shoot_id,)).fetchone()
+            if stopped:
+                job_id = stopped["id"]
+                with c:
+                    c.execute("UPDATE job SET error = NULL WHERE id = ?",
+                              (job_id,))
+                ids = jobs.pending_items(c, job_id)
+            else:
+                try:
+                    job_id = jobs.create_job(c, shoot_id, "analyze", ids)
+                except jobs.JobConflict as e:
+                    raise error(409, "job_conflict", str(e))
             chained = False
             if ids and app.state.runner:
                 root = c.execute(
