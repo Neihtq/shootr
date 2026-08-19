@@ -64,13 +64,39 @@ def analyze_batch(files: list[Path], scale: float = 0.5) -> Iterator[dict]:
 
 
 def swift_prober(path: Path) -> dict | None:
-    """Ingest `Prober` implementation (design 02 §2 stage 4). One file per
-    call — ingest batches at a higher level; fine for M1."""
+    """Ingest `Prober` implementation (design 02 §2 stage 4).
+
+    Single-file fallback only. One subprocess spawn per file costs ~100 ms,
+    of which the probe itself is ~1.7 ms — spawn dominates by 60x. Ingest
+    pre-probes in batches via `probe_many`; this path exists for the files
+    that batch missed.
+    """
     for result in probe_batch([path]):
         if "error" in result:
             raise RuntimeError(result["error"])
         return result
     return None
+
+
+def probe_many(paths: list[Path], chunk: int = 400) -> dict[str, dict]:
+    """Probe many files with one subprocess per `chunk`, keyed by path.
+
+    Chunked rather than one giant call so a helper crash costs one chunk,
+    not the whole scan. Per-file `error` rows are dropped: the caller
+    creates the photo row with NULL metadata (design 02 §5), same as a
+    probe that was never attempted.
+    """
+    out: dict[str, dict] = {}
+    for i in range(0, len(paths), chunk):
+        batch = paths[i:i + chunk]
+        try:
+            for result in probe_batch(batch):
+                path = result.get("path")
+                if path and "error" not in result:
+                    out[path] = result
+        except Exception:  # noqa: BLE001 — a dead chunk falls back to
+            continue       # per-file probing, it must not abort the scan
+    return out
 
 
 def render(raw: Path, out: Path, size: int = 2048) -> None:

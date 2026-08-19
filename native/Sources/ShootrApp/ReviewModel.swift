@@ -89,9 +89,19 @@ final class ReviewModel {
     }
 
     func addLibrary(path: String) async {
+        // Scanning is synchronous and can take seconds on a large folder;
+        // without this the window looks frozen and nothing explains why.
+        analyzeStatus = "scanning \((path as NSString).lastPathComponent)…"
+        defer { analyzeStatus = nil }
         do {
-            _ = try await api.addLibrary(rootPath: path)
+            let r = try await api.addLibrary(rootPath: path)
             await loadHome()
+            if r.scan.added == 0 && r.scan.unchanged == 0 {
+                errorMessage = "No photos found in \(path) — "
+                    + "checked for RAW (CR2/CR3/ARW/RAF) and JPEG files."
+            } else {
+                errorMessage = nil
+            }
         } catch {
             errorMessage = String(describing: error)
         }

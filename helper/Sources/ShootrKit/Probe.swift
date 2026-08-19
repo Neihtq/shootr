@@ -53,10 +53,15 @@ public func probe(url: URL) -> ProbeOut? {
     }
     out.cameraModel = tiff[kCGImagePropertyTIFFModel] as? String
     out.lensModel = exif[kCGImagePropertyExifLensModel] as? String
-    if let isos = exif[kCGImagePropertyExifISOSpeedRatings] as? [Any],
-       let first = isos.first as? Int {
-        out.iso = first
-    }
+    // ISO lives under different keys per vendor: Canon CR3 leaves
+    // ISOSpeedRatings empty and fills ISOSpeed / RecommendedExposureIndex
+    // (verified against real CR3s), while JPEG/other RAWs use the
+    // ISOSpeedRatings array. Try each in turn rather than assuming one.
+    out.iso = (exif[kCGImagePropertyExifISOSpeedRatings] as? [Any])?
+        .first.flatMap { ($0 as? NSNumber)?.intValue }
+        ?? (exif[kCGImagePropertyExifISOSpeed] as? NSNumber)?.intValue
+        ?? (exif[kCGImagePropertyExifRecommendedExposureIndex]
+            as? NSNumber)?.intValue
     out.shutter = exif[kCGImagePropertyExifExposureTime] as? Double
     out.aperture = exif[kCGImagePropertyExifFNumber] as? Double
     out.focalLength = exif[kCGImagePropertyExifFocalLength] as? Double

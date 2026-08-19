@@ -22,9 +22,18 @@ export function ShootList({
     if (!newRoot) return;
     setBusy("scanning…");
     try {
-      await post("/api/libraries", { root_path: newRoot });
+      const r = await post<{
+        id: number;
+        scan: { added: number; unchanged: number; errors: number };
+      }>("/api/libraries", { root_path: newRoot });
       setNewRoot("");
       qc.invalidateQueries();
+      if (r.scan.added === 0 && r.scan.unchanged === 0) {
+        alert(
+          `No photos found in ${newRoot}\n\n` +
+            "Looked for RAW (CR2/CR3/ARW/RAF) and JPEG files.",
+        );
+      }
     } catch (e) {
       alert((e as Error).message);
     } finally {

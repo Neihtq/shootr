@@ -132,6 +132,9 @@ PROBE_FIELDS = (
 )
 
 Prober = Callable[[Path], dict | None]
+# Bulk form: many paths in, {absolute path: metadata} out. Missing keys are
+# not errors — the caller falls back to the single-file `Prober`.
+BatchProber = Callable[[list[Path]], dict[str, dict]]
 
 
 def null_prober(path: Path) -> dict | None:
@@ -194,9 +197,16 @@ class ScanResult:
 
 
 def scan(conn: sqlite3.Connection, library_id: int, root: Path,
-         prober: Prober = null_prober, batch_size: int = 500) -> ScanResult:
+         prober: Prober = null_prober, batch_size: int = 500,
+         batch_prober: BatchProber | None = None,
+         on_progress: Callable[[int, int], None] | None = None) -> ScanResult:
     """Incremental, idempotent scan. Commits in batches so a mid-run unplug
-    keeps completed rows valid (design 02 §5)."""
+    keeps completed rows valid (design 02 §5).
+
+    `batch_prober` pre-probes all new files in a few subprocesses instead of
+    one per file — the difference between 2 s and 2 min on a 1200-RAW folder.
+    `prober` still handles anything the batch didn't return.
+    """
     result = ScanResult()
 
     known: dict[str, tuple[float, int, int]] = {}  # rel_path → (mtime, size, id)
@@ -219,9 +229,24 @@ def scan(conn: sqlite3.Connection, library_id: int, root: Path,
             continue
         all_files.append(f)
 
+    candidates = pair_files(all_files)
+
+    # Bulk pre-probe (design 02 §2 stage 4). Only genuinely new files need
+    # metadata: moved files keep their analysis, modified ones keep their
+    # probe fields, and unchanged files never got here.
+    probed: dict[str, dict] = {}
+    if batch_prober and candidates:
+        fresh = [c.primary.abs_path for c in candidates
+                 if c.primary.rel_path not in known]
+        if fresh:
+            probed = batch_prober(fresh)
+
+    total = len(candidates)
     pending = 0
-    for cand in pair_files(all_files):
+    for done, cand in enumerate(candidates, start=1):
         f = cand.primary
+        if on_progress and (done % 100 == 0 or done == total):
+            on_progress(done, total)
         try:
             cid = content_id(f.abs_path, f.size)
         except OSError as e:
@@ -281,7 +306,9 @@ def scan(conn: sqlite3.Connection, library_id: int, root: Path,
             by_content[cid] = photo_id
             result.invalidated += 1
         else:
-            meta = _safe_probe(prober, f, result)
+            meta = probed.get(str(f.abs_path))
+            if meta is None:
+                meta = _safe_probe(prober, f, result)
             cols = {
                 "library_id": library_id,
                 "content_id": cid,
@@ -319,6 +346,54 @@ def scan(conn: sqlite3.Connection, library_id: int, root: Path,
             )
     conn.commit()
     return result
+
+
+def backfill_metadata(conn: sqlite3.Connection, library_id: int, root: Path,
+                      batch_prober: BatchProber) -> int:
+    """Re-probe rows whose metadata is missing, and only those.
+
+    The fast-path filter skips unchanged files, so rows written by an older
+    or broken probe never heal on rescan — Canon CR3s scanned before the
+    ISO key fix kept `iso` NULL forever. Keyed on `captured_at IS NULL OR
+    iso IS NULL` rather than a version stamp: it targets the actual defect
+    and costs one batched probe per affected file.
+
+    Only ever fills probe columns. Analysis, scores and user overrides are
+    untouched, so this is safe to run on a library mid-review.
+    """
+    rows = conn.execute(
+        "SELECT id, rel_path FROM photo WHERE library_id = ? AND missing = 0 "
+        "AND (captured_at IS NULL OR iso IS NULL)", (library_id,)
+    ).fetchall()
+    if not rows:
+        return 0
+
+    paths, by_path = [], {}
+    for r in rows:
+        abs_path = root / r["rel_path"]
+        if abs_path.is_file():
+            paths.append(abs_path)
+            by_path[str(abs_path)] = r["id"]
+    if not paths:
+        return 0
+
+    probed = batch_prober(paths)
+    updated = 0
+    with conn:
+        for path, meta in probed.items():
+            photo_id = by_path.get(path)
+            if photo_id is None:
+                continue
+            cols = {k: meta.get(k) for k in PROBE_FIELDS if meta.get(k) is not None}
+            if not cols:
+                continue
+            sets = ", ".join(f"{k} = ?" for k in cols)
+            conn.execute(f"UPDATE photo SET {sets} WHERE id = ?",
+                         (*cols.values(), photo_id))
+            updated += 1
+    log.info("backfilled metadata for %d photos in library %d",
+             updated, library_id)
+    return updated
 
 
 def _safe_probe(prober: Prober, f: DiscoveredFile, result: ScanResult) -> dict:

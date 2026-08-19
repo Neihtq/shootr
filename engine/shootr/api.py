@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import db, helper, jobs, pipeline, xmp
-from .ingest import propose_shoots, scan
+from .ingest import backfill_metadata, propose_shoots, scan
 from .runner import JobRunner
 
 
@@ -141,15 +141,26 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                         "VALUES (?, datetime('now'))", (str(root),))
                     lib_id = cur.lastrowid
             # The Swift helper prober fills captured_at etc. — without it,
-            # shoot proposals (time-gap based) would come back empty.
-            prober = helper.swift_prober if helper.helper_available() \
-                else None
-            result = scan(c, lib_id, root,
-                          **({"prober": prober} if prober else {}))
+            # shoot proposals would have no capture times. `batch_prober`
+            # is the one that matters for throughput: per-file spawning
+            # took ~100 ms/file, which blew past client HTTP timeouts on a
+            # 1200-RAW folder while the scan kept running server-side.
+            kwargs: dict = {}
+            if helper.helper_available():
+                kwargs["prober"] = helper.swift_prober
+                kwargs["batch_prober"] = helper.probe_many
+            result = scan(c, lib_id, root, **kwargs)
+            # Heal rows left with NULL metadata by an older/broken probe:
+            # the fast-path filter would skip them forever otherwise.
+            backfilled = 0
+            if "batch_prober" in kwargs:
+                backfilled = backfill_metadata(
+                    c, lib_id, root, kwargs["batch_prober"])
             return {"id": lib_id, "root_path": str(root),
                     "scan": {"added": result.added,
                              "unchanged": result.unchanged,
-                             "errors": len(result.errors)}}
+                             "errors": len(result.errors),
+                             "backfilled": backfilled}}
         finally:
             c.close()
 

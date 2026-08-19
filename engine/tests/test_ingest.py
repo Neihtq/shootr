@@ -195,6 +195,93 @@ class TestScan:
         isos = {row["iso"] for row in conn.execute("SELECT iso FROM photo")}
         assert isos == {800, None}  # bad file has NULL metadata, flagged row
 
+    def test_batch_prober_avoids_per_file_probing(self, conn, library):
+        """Regression: probing one file per subprocess cost ~100 ms each,
+        so a 1200-RAW folder took ~2 min inside one blocking HTTP request
+        and the client timed out while the scan kept running. The batch
+        prober must serve every new file, leaving the single-file path
+        unused."""
+        for i in range(5):
+            make_raw(library, f"IMG_{i}.CR3", str(i).encode())
+        single_calls = []
+
+        def single(path):
+            single_calls.append(path)
+            return {"iso": 100}
+
+        def batch(paths):
+            return {str(p): {"iso": 800} for p in paths}
+
+        r = scan(conn, 1, library, prober=single, batch_prober=batch)
+        assert r.added == 5
+        assert single_calls == []  # batch covered everything
+        isos = {row["iso"] for row in conn.execute("SELECT iso FROM photo")}
+        assert isos == {800}
+
+    def test_batch_prober_gaps_fall_back_to_single(self, conn, library):
+        """A file the batch didn't return must still get probed, not land
+        with silently NULL metadata."""
+        make_raw(library, "IMG_1.CR3", b"a")
+        make_raw(library, "IMG_2.CR3", b"b")
+
+        def batch(paths):
+            return {str(p): {"iso": 800} for p in paths if "IMG_1" in str(p)}
+
+        scan(conn, 1, library, prober=lambda p: {"iso": 100},
+             batch_prober=batch)
+        isos = {row["filename"]: row["iso"] for row in
+                conn.execute("SELECT filename, iso FROM photo")}
+        assert isos == {"IMG_1.CR3": 800, "IMG_2.CR3": 100}
+
+    def test_rescan_does_not_reprobe(self, conn, library):
+        """Unchanged files must not reach the prober at all — otherwise
+        re-adding a known library pays the full scan cost again."""
+        make_raw(library, "IMG_1.CR3", mtime=1000)
+        batched = []
+
+        def batch(paths):
+            batched.extend(paths)
+            return {str(p): {"iso": 800} for p in paths}
+
+        scan(conn, 1, library, batch_prober=batch)
+        assert len(batched) == 1
+        batched.clear()
+        r = scan(conn, 1, library, batch_prober=batch)
+        assert r.unchanged == 1 and batched == []
+
+    def test_backfill_heals_rows_the_fast_path_skips(self, conn, library):
+        """Regression: CR3s scanned before the ISO-key fix kept iso NULL,
+        and the fast-path filter meant a rescan never revisited them."""
+        from shootr.ingest import backfill_metadata
+        make_raw(library, "IMG_1.CR3", mtime=1000)
+        make_raw(library, "IMG_2.CR3", b"two", mtime=1000)
+        # Old broken probe: captured_at only, no iso.
+        scan(conn, 1, library, prober=lambda p: {"captured_at": "2026-06-14T10:00:00"})
+        assert [r["iso"] for r in conn.execute("SELECT iso FROM photo")] == [None, None]
+
+        # A plain rescan cannot fix it — nothing changed on disk.
+        r = scan(conn, 1, library, batch_prober=lambda ps: {})
+        assert r.unchanged == 2
+
+        n = backfill_metadata(
+            conn, 1, library,
+            lambda ps: {str(p): {"iso": 800, "aperture": 1.8} for p in ps})
+        assert n == 2
+        rows = list(conn.execute("SELECT iso, aperture, captured_at FROM photo"))
+        assert all(x["iso"] == 800 and x["aperture"] == 1.8 for x in rows)
+        # Existing good values are preserved, not overwritten with NULL.
+        assert all(x["captured_at"] == "2026-06-14T10:00:00" for x in rows)
+
+    def test_backfill_skips_complete_rows(self, conn, library):
+        from shootr.ingest import backfill_metadata
+        make_raw(library, "IMG_1.CR3")
+        scan(conn, 1, library,
+             prober=lambda p: {"captured_at": "2026-06-14T10:00:00", "iso": 400})
+        called = []
+        n = backfill_metadata(conn, 1, library,
+                              lambda ps: called.extend(ps) or {})
+        assert n == 0 and called == []  # nothing to heal, no probing at all
+
     def test_probe_metadata_lands_in_columns(self, conn, library):
         make_raw(library, "IMG_1.CR3")
         meta = {"captured_at": "2026-06-14T15:22:08", "subsec": 340,

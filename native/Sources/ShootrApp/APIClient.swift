@@ -175,6 +175,11 @@ struct APIClient: Sendable {
         req.httpMethod = method
         req.httpBody = body
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Scanning a large library is synchronous in the engine and can run
+        // past URLSession's 60 s default. Timing out there left the app
+        // silent while the scan completed server-side — the request must
+        // outlive the scan, not the other way around.
+        req.timeoutInterval = 600
         let (data, resp): (Data, URLResponse)
         do {
             (data, resp) = try await URLSession.shared.data(for: req)
@@ -232,7 +237,15 @@ struct APIClient: Sendable {
 
     struct AddLibraryBody: Codable { let rootPath: String
         enum CodingKeys: String, CodingKey { case rootPath = "root_path" } }
-    struct AddLibraryResponse: Codable { let id: Int }
+    struct ScanCounts: Codable {
+        let added: Int
+        let unchanged: Int
+        let errors: Int
+    }
+    struct AddLibraryResponse: Codable {
+        let id: Int
+        let scan: ScanCounts
+    }
 
     func addLibrary(rootPath: String) async throws -> AddLibraryResponse {
         let body = try JSONEncoder().encode(AddLibraryBody(rootPath: rootPath))
