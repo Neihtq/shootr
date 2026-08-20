@@ -12,10 +12,11 @@ from shootr.scoring import (
 
 
 def face(sharp_l=0.8, sharp_r=0.6, open_l=0.95, open_r=0.9, yaw=0.0,
-         quality=0.7, idx=0, bbox=(0.3, 0.2, 0.2, 0.25)):
+         quality=0.7, idx=0, bbox=(0.3, 0.2, 0.2, 0.25), eye_source=None):
     return FaceMeasurement(
         idx=idx, bbox=bbox, yaw=yaw, capture_quality=quality,
         left=Eye(sharp_l, open_l), right=Eye(sharp_r, open_r),
+        eye_source=eye_source,
     )
 
 
@@ -77,6 +78,28 @@ class TestEyeSemantics:
                          faces=[face(open_l=0.95, open_r=0.2)])
         rec = score(m, "portrait")
         assert rec.components["eyes_open"]["value"] < 0.1
+
+    def test_eyes_open_curve_is_per_source(self):
+        """Calibrated on hand-labelled frames (2026-08-20): the detectors'
+        raw scales differ — a blendshapes 0.55 is a labelled-closed eye
+        while an EAR 0.55 is past EAR's separation point (0.42). One shared
+        curve false-rejected 21.7% of open eyes under EAR."""
+        def eyes_open(source):
+            m = Measurements(frame=sharp_frame(),
+                             faces=[face(open_l=0.55, open_r=0.55,
+                                         eye_source=source)])
+            return score(m, "portrait").components["eyes_open"]["value"]
+
+        # Same raw value, opposite verdicts — below culling's 0.4 boundary
+        # for blendshapes (labelled closed at 0.33–0.59), above it for EAR.
+        assert eyes_open("mediapipe_blendshapes") < 0.4
+        assert eyes_open("ear_landmarks") > 0.4
+        # Provenance lands in the evidence, per design 04 §1.
+        m = Measurements(frame=sharp_frame(),
+                         faces=[face(eye_source="ear_landmarks")])
+        rec = score(m, "portrait")
+        assert rec.components["eyes_open"]["evidence"]["eye_source"] == \
+            "ear_landmarks"
 
     def test_focus_cliff(self):
         """Sharp vs missed must be a cliff, not a slope (design 04 §2.1)."""

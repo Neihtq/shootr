@@ -37,6 +37,7 @@ def _measurements_for(row: sqlite3.Row, faces: list[sqlite3.Row],
             capture_quality=f["capture_quality"],
             left=scoring.Eye(f["eye_sharp_l"], f["eye_open_l"]),
             right=scoring.Eye(f["eye_sharp_r"], f["eye_open_r"]),
+            eye_source=f["eye_source"],
         ))
         face_dicts.append({"idx": f["idx"], "bbox": bbox, "yaw": f["yaw"]})
 

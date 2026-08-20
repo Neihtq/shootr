@@ -34,6 +34,10 @@ class FaceMeasurement:
     capture_quality: float | None = None
     left: Eye = field(default_factory=lambda: Eye(None, None))
     right: Eye = field(default_factory=lambda: Eye(None, None))
+    # Which detector produced `open` — selects the calibrated curve
+    # (EYES_OPEN_CURVES): raw scales differ per source and one shared curve
+    # measurably mis-scores the others.
+    eye_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,7 @@ def weights_hash(profile: str) -> str:
         {"profile": profile, "weights": PROFILE_WEIGHTS[profile],
          "penalties": FLAG_PENALTIES,
          "curves": {"eye": EYE_FOCUS_CURVE, "open": EYES_OPEN_CURVE,
+                    "open_by_source": EYES_OPEN_CURVES,
                     "frame": FRAME_SHARPNESS_CURVE}},
         sort_keys=True,
     )
@@ -124,7 +129,26 @@ def _piecewise(x: float, points: list[tuple[float, float]]) -> float:
 # is unrecoverable, not "slightly worse" (design 04 §2.1).
 EYE_FOCUS_CURVE = [(0.0, 0.0), (0.25, 0.2), (0.45, 0.6), (0.70, 1.0)]
 # Steep through the partial-blink band — the most common real failure.
+# Fallback for unknown eye sources only; known sources are calibrated below.
 EYES_OPEN_CURVE = [(0.0, 0.0), (0.35, 0.1), (0.60, 0.4), (0.85, 1.0)]
+
+# Per-source calibration (hand-labelled frames, 2026-08-20, 33 faces from a
+# real event shoot — docs/benchmarks/2026-08-20-blink-labels/). The raw
+# scales differ per detector, so one shared curve silently mis-scores the
+# other detector — measured: the fallback curve's effective cut (raw 0.60)
+# false-rejected 21.7% of open eyes under EAR, whose real separation point
+# is 0.42. Each curve places score 0.4 (culling's "eyes closed" boundary)
+# at that source's measured separation. n=6 closed faces — provisional;
+# refit in M2 with catalog history (design 04 §7).
+EYES_OPEN_CURVES: dict[str, list[tuple[float, float]]] = {
+    # EAR: labelled closed 0.00–0.41, open μ0.85 (min 0.29). Best cut 0.42:
+    # FR 4.3%, FA 16.7%.
+    "ear_landmarks": [(0.0, 0.0), (0.30, 0.1), (0.42, 0.4), (0.75, 1.0)],
+    # Blendshapes: labelled closed 0.33–0.59, open 0.65–0.99 — clean gap;
+    # 0.62 is its midpoint. FR 0%, FA 0% on the labelled set.
+    "mediapipe_blendshapes": [(0.0, 0.0), (0.45, 0.1), (0.62, 0.4),
+                              (0.85, 1.0)],
+}
 
 # Whole frame soft → motion blur / shake, not a focus miss: eye normalization
 # against a soft frame is meaningless (design 04 §2.1 guard).
@@ -235,8 +259,10 @@ def _eyes_open(face: FaceMeasurement | None) -> Component:
         return Component(None, {"reason": "detector_unavailable"})
     # min, not max: one closed eye ruins the frame (design 04 §2.2).
     worst = min(measured.values())
-    return Component(_piecewise(worst, EYES_OPEN_CURVE),
-                     {"open_l": opens["left"], "open_r": opens["right"]})
+    curve = EYES_OPEN_CURVES.get(face.eye_source or "", EYES_OPEN_CURVE)
+    return Component(_piecewise(worst, curve),
+                     {"open_l": opens["left"], "open_r": opens["right"],
+                      "eye_source": face.eye_source})
 
 
 def _sharpness(frame: FrameMeasurement) -> Component:

@@ -73,20 +73,36 @@ low, the whole frame is soft → route to motion-blur, don't report focus miss.
 itself a signal (mid-blink, wink).
 
 Partial blinks are the hard case and the most common real failure: the "eyes at 40% open"
-frame that looks fine in a thumbnail grid and terrible at full size. Thresholds:
+frame that looks fine in a thumbnail grid and terrible at full size.
 
-| `open` | score |
-|---|---|
-| ≥ 0.85 | 1.0 |
-| 0.60–0.85 | 0.4–1.0 (steep) |
-| 0.35–0.60 | 0.1–0.4 |
-| < 0.35 | 0.0 |
+**The curve is per-`eye_source`** — first validation round (2026-08-20, 33 hand-labelled
+faces from a real event shoot via `engine/tools/label_blinks.py`; raw data
+`docs/benchmarks/2026-08-20-blink-labels/`) showed the detectors' raw scales differ
+enough that one shared curve measurably mis-scores: labelled-closed eyes sat at 0.00–0.41
+under EAR but 0.33–0.59 under MediaPipe blendshapes. The shared curve's effective cut
+(raw 0.60 → score 0.4) false-rejected 21.7% of open eyes under EAR.
 
-**Detector reliability is a live risk** (§03.5). Because this metric is *dominant* for
-portrait/event, a bad detector actively discards good photos. Mitigations: `eye_source`
-recorded per face; a confidence gate that **abstains** rather than guesses when yaw is
-extreme (profile views have no reliable eye aspect ratio); and mandatory accuracy
-validation before it drives culling.
+Calibrated curves (`EYES_OPEN_CURVES` in scoring.py; score 0.4 = culling's "eyes closed"
+boundary, placed at each source's measured separation point):
+
+| source | separation (raw → score 0.4) | on labelled set |
+|---|---|---|
+| `ear_landmarks` | 0.42 | false-reject 4.3%, false-accept 16.7% |
+| `mediapipe_blendshapes` | 0.62 | false-reject 0%, false-accept 0% — clean gap 0.59→0.65 |
+| unknown source | 0.60 (generic fallback curve) | uncalibrated |
+
+Blendshapes separated cleanly where EAR overlapped (EAR scored two labelled-closed faces
+0.40/0.41 — inside its open range). **Provisional: n=6 closed faces.** Both curves refit
+in M2 against catalog history (§7); the labelling tool makes growing the labelled set an
+hour of keystrokes, and every new eye source ships with its own labelling round before
+its scores drive culling.
+
+**Detector reliability remains a live risk** (§03.5). Because this metric is *dominant*
+for portrait/event, a bad detector actively discards good photos. Mitigations:
+`eye_source` recorded per face and surfaced in the component evidence; a confidence gate
+that **abstains** rather than guesses when yaw is extreme (profile views have no reliable
+eye signal); and per-source validation as above — an unvalidated source gets the generic
+curve and a labelling round, not trust.
 
 Multi-person frames: score the **primary subject** (§3), but flag
 `other_subject_blinking` — in group shots that's usually the reason to prefer another
