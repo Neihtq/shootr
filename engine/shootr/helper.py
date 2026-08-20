@@ -182,9 +182,13 @@ def probe_many(paths: list[Path], chunk: int = 400) -> dict[str, dict]:
     return out
 
 
-def render(raw: Path, out: Path, size: int = 2048) -> None:
-    subprocess.run(
-        [str(render_helper_path()), "render", "--file", str(raw),
-         "--size", str(size), "--out", str(out)],
-        check=True, capture_output=True,
-    )
+def render(raw: Path, out: Path, size: int = 2048,
+           crop: tuple[float, float, float, float] | None = None) -> None:
+    """Display-path JPEG. `crop` is normalized [x,y,w,h], bottom-left origin
+    (the face-bbox convention) — rendering only the region is what makes
+    full-res eye crops cheap enough to serve interactively."""
+    args = [str(render_helper_path()), "render", "--file", str(raw),
+            "--size", str(size), "--out", str(out)]
+    if crop is not None:
+        args += ["--crop", ",".join(f"{v:.6f}" for v in crop)]
+    subprocess.run(args, check=True, capture_output=True)

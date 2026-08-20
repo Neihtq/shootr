@@ -84,6 +84,7 @@ Press `?` in either client for this list in-app.
 | `C` | compare against the group's runner-ups (synced zoom) |
 | `S` | sharpness heatmap — where did focus land? |
 | `O` | composition overlay — thirds grid + face boxes |
+| `B` | eye crops — full-res eyes of the primary face (blink check) |
 | `E` | evidence panel |
 | `?` | shortcut list + how the verdicts are chosen |
 | `Esc` | back to shoots |

@@ -83,15 +83,38 @@ case "analyze":
 
 case "render":
     guard let file = arg("file"), let out = arg("out")
-    else { fail("render --file <raw> --out <path> [--size 2048]") }
+    else { fail("render --file <raw> --out <path> [--size 2048] "
+                + "[--crop x,y,w,h]") }
     let size = arg("size").flatMap(Double.init) ?? 2048
     do {
         // Display decode path — Apple defaults ON (design 03 §2).
         let decoded = try decode(url: URL(fileURLWithPath: file),
                                  path: .display, scale: 1.0)
-        let extent = decoded.image.extent
+        var image = decoded.image
+        // Optional crop, normalized [x,y,w,h] with bottom-left origin —
+        // the same convention as face bboxes, and CIImage's own extent
+        // origin, so no flip. Serves the eye-band crops (design 11 §3).
+        if let cropArg = arg("crop") {
+            let parts = cropArg.split(separator: ",").compactMap {
+                Double($0)
+            }
+            guard parts.count == 4 else { fail("--crop expects x,y,w,h") }
+            let e = image.extent
+            let rect = CGRect(
+                x: e.origin.x + parts[0] * e.width,
+                y: e.origin.y + parts[1] * e.height,
+                width: parts[2] * e.width,
+                height: parts[3] * e.height
+            ).intersection(e)
+            guard !rect.isEmpty else { fail("--crop outside image") }
+            // Translate so the JPEG writer sees a zero-origin image.
+            image = image.cropped(to: rect).transformed(
+                by: CGAffineTransform(translationX: -rect.origin.x,
+                                      y: -rect.origin.y))
+        }
+        let extent = image.extent
         let scale = min(1.0, size / max(extent.width, extent.height))
-        let scaled = decoded.image.transformed(
+        let scaled = image.transformed(
             by: CGAffineTransform(scaleX: scale, y: scale))
         let color = CGColorSpace(name: CGColorSpace.sRGB)!
         try sharedContext.writeJPEGRepresentation(

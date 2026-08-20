@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 
 import asyncio
@@ -391,6 +392,11 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                         retryable=True)
         return path, row["content_id"]
 
+    # Thumbnail decodes serialized: RAW decode is GPU-backed, and a burst
+    # of parallel cache misses (skimming into a cold group fans out ~7
+    # requests) makes every decode slower than running them in sequence.
+    thumb_lock = threading.Lock()
+
     @app.get("/api/photos/{photo_id}/thumb")
     def thumbnail(photo_id: int, size: int = 1024):
         """Content-addressed cache (design 10 §4): key = content_id + size,
@@ -408,10 +414,12 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
             if not helper.helper_available():
                 raise error(503, "decode_failed",
                             "Swift helper not built", retryable=True)
-            try:
-                helper.render(src, cached, size=size)
-            except Exception as e:
-                raise error(500, "decode_failed", str(e))
+            with thumb_lock:
+                if not cached.is_file():  # another request may have won
+                    try:
+                        helper.render(src, cached, size=size)
+                    except Exception as e:
+                        raise error(500, "decode_failed", str(e))
         return FileResponse(
             cached, media_type="image/jpeg",
             headers={"ETag": f'"{content_id}:{size}"',
@@ -419,9 +427,11 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
 
     @app.get("/api/photos/{photo_id}/eye-crop")
     def eye_crop(photo_id: int, face: int = 0, eye: str = "left"):
-        """Full-res eye crop — the "prove the eye is sharp" view (design 10
-        §4). Uncached and full resolution by design: downscaling it would
-        defeat the purpose."""
+        """Full-res eye crop — the "prove the eye is sharp / is it a blink"
+        view (design 10 §4). Rendered as a CROP of the full-res decode (the
+        helper's --crop), not a downscale of the whole frame: the region
+        keeps native resolution and the render is ~10x faster than the old
+        whole-image-at-4096 version."""
         if eye not in ("left", "right"):
             raise error(400, "invalid_eye", "eye must be left|right")
         c = conn()
@@ -435,18 +445,36 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                             f"No face {face} on photo {photo_id}")
         finally:
             c.close()
-        # M1: render the face region at full size via the display path; a
-        # dedicated eye-crop helper command can tighten this later.
-        out = app.state.cache_dir / f"eyecrop_{content_id}_{face}_{eye}.jpg"
+        # Eye landmarks aren't persisted (M1), so derive the eye band from
+        # the face bbox: eyes sit in the upper-middle of a detector box.
+        # Vision bbox is bottom-left normalized [x, y, w, h] → the band at
+        # 45–80% of face height, split into halves. `left`/`right` are
+        # SUBJECT-relative (Vision landmark names, same keys as the eyes
+        # data): a camera-facing subject's left eye is on the image RIGHT.
+        bx, by, bw, bh = json.loads(f["bbox"])
+        # Eyes sit high in a Vision box (checked on real crops): band at
+        # 55–100% of face height.
+        band_y = by + bh * 0.55
+        band_h = bh * 0.45
+        half_w = bw * 0.62  # halves overlap a little; eyes aren't at edges
+        crop_x = bx + bw - half_w if eye == "left" else bx
+        crop = (max(0.0, crop_x - bw * 0.05),
+                max(0.0, band_y),
+                min(1.0, half_w + bw * 0.1),
+                min(1.0, band_h))
+        out = app.state.cache_dir / f"eyecrop2_{content_id}_{face}_{eye}.jpg"
         if not out.is_file():
             if not helper.helper_available():
                 raise error(503, "decode_failed",
                             "Swift helper not built", retryable=True)
             try:
-                helper.render(src, out, size=4096)
+                helper.render(src, out, size=768, crop=crop)
             except Exception as e:
                 raise error(500, "decode_failed", str(e))
-        return FileResponse(out, media_type="image/jpeg")
+        return FileResponse(
+            out, media_type="image/jpeg",
+            headers={"ETag": f'"{content_id}:eye:{face}:{eye}"',
+                     "Cache-Control": "public, max-age=31536000, immutable"})
 
     @app.get("/api/photos/{photo_id}/sharpness-map")
     def sharpness_map(photo_id: int):

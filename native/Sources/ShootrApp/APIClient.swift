@@ -265,6 +265,14 @@ struct APIClient: Sendable {
             .appending(queryItems: [.init(name: "size", value: "\(size)")])
     }
 
+    /// Full-res eye-band crop (design 11 §3). `eye` is subject-relative,
+    /// matching the keys in `FaceInfo.eyes`.
+    func eyeCropURL(photoId: Int, face: Int, eye: String) -> URL {
+        base.appendingPathComponent("api/photos/\(photoId)/eye-crop")
+            .appending(queryItems: [.init(name: "face", value: "\(face)"),
+                                    .init(name: "eye", value: eye)])
+    }
+
     // MARK: library management (native replaces the web control panel)
 
     struct AddLibraryBody: Codable { let rootPath: String

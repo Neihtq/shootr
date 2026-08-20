@@ -663,6 +663,7 @@ enum Shortcuts {
         Item("S", "sharpness heatmap",
              "red = sharpest tiles in THIS frame — shows where focus landed"),
         Item("O", "composition overlay", "thirds grid + face boxes"),
+        Item("B", "eye crops", "full-res eyes of the primary face — blink check"),
         Item("E", "evidence panel", "per-metric scores behind the verdict"),
         Item("?", "this list"),
     ]
@@ -875,6 +876,13 @@ struct LoupeView: View {
                                         CompositionOverlay(photo: photo)
                                     }
                                 }
+                                // Same stale-guard as composition: only the
+                                // on-screen frame's eyes.
+                                if model.showEyes,
+                                   let photo = model.photo,
+                                   photo.id == loadedFor {
+                                    EyeOverlay(photo: photo)
+                                }
                             }
                     }
                 } else {
@@ -920,6 +928,20 @@ struct LoupeView: View {
             // Clear first: showing the old frame while the new one decodes
             // is how a wrong-photo read happens in the first place.
             image = nil
+            loadedFor = nil
+            dragOffset = .zero
+            panBase = .zero
+            // Two-stage load: the 2048 thumbnail (server-cached, fast) goes
+            // up immediately so skimming groups never stares at a spinner;
+            // the local full-res decode replaces it when ready. Both stages
+            // re-check the current id — same stale-read discipline as the
+            // single-stage version.
+            if let quick = await ImagePipeline.shared.quickImage(photoId: pid) {
+                guard !Task.isCancelled, model.currentPhotoId == pid
+                else { return }
+                image = quick
+                loadedFor = pid
+            }
             let detail = model.photo?.id == pid
                 ? model.photo
                 : try? await model.api.photo(pid)
@@ -928,10 +950,8 @@ struct LoupeView: View {
                 photo: detail, libraryRoot: model.libraryRoot)
             // A newer frame may have been selected while this decoded.
             guard !Task.isCancelled, model.currentPhotoId == pid else { return }
-            image = loaded
+            if let loaded { image = loaded }
             loadedFor = pid
-            dragOffset = .zero
-            panBase = .zero
         }
         .onChange(of: model.zoomed) {
             dragOffset = .zero
@@ -1213,6 +1233,7 @@ struct KeyCatcher: NSViewRepresentable {
             case "z": model.zoomed.toggle()
             case "s": model.showSharpness.toggle()
             case "o": model.showComposition.toggle()
+            case "b": model.showEyes.toggle()
             // "/" too: ? is shift-/ on US layouts but not on every layout,
             // and the unshifted key is what people actually press.
             case "?", "/": model.showShortcuts = true

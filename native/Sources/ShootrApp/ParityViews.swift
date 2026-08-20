@@ -323,6 +323,65 @@ struct SharpnessOverlay: View {
     }
 }
 
+// MARK: - Eye overlay (design 11 §3): is the subject blinking?
+
+/// Full-res eye-band crops of the primary face, floated over the loupe.
+/// The loupe shows the whole frame; a blink is invisible at fit zoom — this
+/// answers it without leaving the photo or opening 100% zoom. Values shown
+/// beside each crop so the number and the pixels can be checked against
+/// each other (design 04 §1: every score inspectable).
+struct EyeOverlay: View {
+    let photo: PhotoDetail
+
+    var body: some View {
+        if let face = photo.faces.first {
+            HStack(spacing: 8) {
+                // Image-left first: subject's RIGHT eye is on image left
+                // for a camera-facing subject.
+                eyePane(photoId: photo.id, face: face, eye: "right")
+                eyePane(photoId: photo.id, face: face, eye: "left")
+            }
+            .padding(8)
+            .background(.black.opacity(0.72),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .frame(maxWidth: .infinity, maxHeight: .infinity,
+                   alignment: .bottomTrailing)
+            .padding(10)
+            .allowsHitTesting(false)
+        } else {
+            Text("no face detected")
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.black.opacity(0.72), in: Capsule())
+                .frame(maxWidth: .infinity, maxHeight: .infinity,
+                       alignment: .bottomTrailing)
+                .padding(10)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func eyePane(photoId: Int, face: FaceInfo,
+                         eye: String) -> some View {
+        VStack(spacing: 3) {
+            AsyncImage(url: APIClient().eyeCropURL(
+                photoId: photoId, face: face.idx, eye: eye)) {
+                $0.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Rectangle().fill(Theme.surfaceRaised)
+            }
+            .frame(width: 148, height: 96)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            let info = face.eyes[eye]
+            Text("\(eye) · open "
+                 + (info?.open.map { String(format: "%.2f", $0) } ?? "—"))
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+        }
+    }
+}
+
 // MARK: - Composition overlay (design 11 §3): is this flag fair?
 
 struct CompositionOverlay: View {

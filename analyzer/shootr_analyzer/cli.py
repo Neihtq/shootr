@@ -111,14 +111,39 @@ def main() -> None:
     elif command == "render":
         file, out = _arg("file"), _arg("out")
         if not file or not out:
-            _fail("render --file <raw> --out <path> [--size 2048]")
+            _fail("render --file <raw> --out <path> [--size 2048] "
+                  "[--crop x,y,w,h]")
         size = int(_arg("size") or 2048)
         from .decode import decode_display
 
         try:
             from PIL import Image
 
-            rgb = decode_display(Path(file), size=size)
+            if crop_arg := _arg("crop"):
+                # Normalized bottom-left [x,y,w,h] (face-bbox convention,
+                # Swift render parity). Decode full, crop, then bound size.
+                parts = [float(v) for v in crop_arg.split(",")]
+                if len(parts) != 4:
+                    _fail("--crop expects x,y,w,h")
+                rgb = decode_display(Path(file), size=1 << 30)
+                h, w = rgb.shape[:2]
+                x, y, cw, ch = parts
+                # bottom-left origin → numpy top-left rows
+                y0 = max(0, int(h * (1 - y - ch)))
+                y1 = min(h, int(h * (1 - y)))
+                x0, x1 = max(0, int(w * x)), min(w, int(w * (x + cw)))
+                if y1 - y0 < 1 or x1 - x0 < 1:
+                    _fail("--crop outside image")
+                rgb = rgb[y0:y1, x0:x1]
+                ch_, cw_ = rgb.shape[:2]
+                s = min(1.0, size / max(cw_, ch_))
+                if s < 1.0:
+                    import cv2
+
+                    rgb = cv2.resize(rgb, (max(1, round(cw_ * s)),
+                                           max(1, round(ch_ * s))))
+            else:
+                rgb = decode_display(Path(file), size=size)
             Image.fromarray(rgb).save(out, "JPEG", quality=90)
             emit_line({"path": file, "out": out, "status": "ok"})
         except Exception as exc:  # noqa: BLE001

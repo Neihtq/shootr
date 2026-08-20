@@ -30,7 +30,8 @@ pytestmark = pytest.mark.skipif(
 # Character keys both clients must bind to the same action. Arrows/space/home
 # are excluded: they're keyCodes in AppKit and names in the browser, so
 # comparing the literals proves nothing.
-SHARED_CHAR_KEYS = {"j", "k", "g", "G", "p", "a", "x", "e", "s", "o", "c", "?"}
+SHARED_CHAR_KEYS = {"j", "k", "g", "G", "p", "a", "x", "e", "s", "o", "b",
+                    "c", "?"}
 
 
 def _native_char_keys() -> set[str]:

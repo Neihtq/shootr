@@ -25,6 +25,7 @@ final class ReviewModel {
     var zoomed = false
     var showSharpness = false  // S — 16×16 heatmap overlay
     var showComposition = false  // O — face boxes + thirds grid
+    var showEyes = false  // B — full-res eye crops (blink check)
     var comparing = false  // C — synced compare sheet
     var showExport = false
     var showSettings = false
@@ -223,8 +224,23 @@ final class ReviewModel {
             }
             await refreshPhoto()
             errorMessage = nil
+            warmLeadingGroups()
         } catch {
             errorMessage = String(describing: error)
+        }
+    }
+
+    /// Entering a shoot is the coldest moment: nothing is prefetched yet,
+    /// and skimming ↓ through the sidebar hits one cache miss per group.
+    /// Warm the first frame of the leading groups via the thumb endpoint —
+    /// the server caches by content, so this is one-time work per library.
+    private func warmLeadingGroups() {
+        let firsts = groups.prefix(12).compactMap(\.photoIds.first)
+        Task.detached(priority: .background) {
+            for pid in firsts {
+                let url = APIClient().thumbURL(photoId: pid, size: 2048)
+                _ = try? await URLSession.shared.data(from: url)
+            }
         }
     }
 
@@ -243,13 +259,21 @@ final class ReviewModel {
         prefetchNeighbors()
     }
 
-    /// Warm the loupe cache for the frames J/K will land on next.
+    /// Warm the loupe cache for the frames J/K will land on next — plus the
+    /// first frame of the adjacent groups, because ↑/↓ skimming always
+    /// lands there and a cold group otherwise stares at a decode.
     private func prefetchNeighbors() {
         guard let g = currentGroup else { return }
-        let candidates = [frameIndex + 1, frameIndex - 1,
+        var candidates = [frameIndex + 1, frameIndex - 1,
                           frameIndex + 2, frameIndex - 2]
             .filter { g.photoIds.indices.contains($0) }
             .map { g.photoIds[$0] }
+        for gi in [groupIndex + 1, groupIndex - 1]
+        where groups.indices.contains(gi) {
+            if let first = groups[gi].photoIds.first {
+                candidates.append(first)
+            }
+        }
         guard !candidates.isEmpty else { return }
         Task {
             var details: [PhotoDetail] = []

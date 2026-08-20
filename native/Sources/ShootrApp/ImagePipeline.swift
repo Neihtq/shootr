@@ -24,6 +24,20 @@ final class ImagePipeline {
         cache.totalCostLimit = 2 << 30  // ~2 GB of decoded pixels, evicted by cost
     }
 
+    /// Whatever can be on screen NOW: the cached full-res loupe if we have
+    /// it, else the 2048 API thumbnail (server-side content-addressed cache
+    /// + NSCache → typically tens of ms). The loupe shows this immediately
+    /// and swaps in the full decode when it lands — a blank loupe for the
+    /// ~1 s a cold CIRAWFilter decode takes is what made group-skimming
+    /// feel slow.
+    func quickImage(photoId: Int) async -> NSImage? {
+        if let hit = cache.object(forKey: "loupe:\(photoId)" as NSString) {
+            return hit
+        }
+        return await fetchThumb(photoId: photoId, size: 2048,
+                                key: "thumb:\(photoId)" as NSString)
+    }
+
     /// Full-quality image for the loupe. Tries the local file first (only
     /// when the library volume is reachable); degrades to the API's 2048px
     /// thumbnail rather than breaking (design 12 §2).

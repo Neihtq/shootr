@@ -19,7 +19,7 @@ import { exifLine } from "../exif";
 import { CompareView } from "./CompareView";
 import { CompositionOverlay } from "./CompositionOverlay";
 import { EvidencePanel } from "./EvidencePanel";
-import { EyeCrops } from "./EyeCrops";
+import { EyeCrops, EyeOverlay } from "./EyeCrops";
 import { SharpnessOverlay } from "./SharpnessOverlay";
 import { KeyHints, ShortcutsDialog } from "./ShortcutsDialog";
 import { useKeyboard } from "../keyboard";
@@ -47,6 +47,7 @@ export function GroupReview({
   const [frameIdx, setFrameIdx] = useState(0);
   const [showSharpness, setShowSharpness] = useState(false);
   const [showComposition, setShowComposition] = useState(false);
+  const [showEyes, setShowEyes] = useState(false);
   const [showEvidence, setShowEvidence] = useState(true);
   const [comparing, setComparing] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -69,6 +70,7 @@ export function GroupReview({
 
   // Thumbnail prefetch ±5 (design 11 §9): J/K scrubbing must not wait on
   // decode round-trips. The browser cache does the storing; we just warm it.
+  // Adjacent groups' FIRST frames too: ↑/↓ skimming always lands there.
   useEffect(() => {
     if (!group) return;
     for (let d = -5; d <= 5; d++) {
@@ -77,7 +79,13 @@ export function GroupReview({
         new Image().src = thumbUrl(pid, 2048);
       }
     }
-  }, [group, frameIdx]);
+    for (const gi of [groupIdx + 1, groupIdx - 1]) {
+      const pid = groups?.[gi]?.photo_ids[0];
+      if (pid !== undefined) {
+        new Image().src = thumbUrl(pid, 2048);
+      }
+    }
+  }, [group, frameIdx, groups, groupIdx]);
 
   const clampFrame = (g: Group | undefined, i: number) =>
     g ? Math.max(0, Math.min(g.photo_ids.length - 1, i)) : 0;
@@ -106,6 +114,7 @@ export function GroupReview({
     onToggleSharpness: () => setShowSharpness((v) => !v),
     onToggleCompare: () => setComparing((v) => !v),
     onToggleComposition: () => setShowComposition((v) => !v),
+    onToggleEyes: () => setShowEyes((v) => !v),
     onShowShortcuts: () => setShowShortcuts(true),
     onTogglePick: () => {
       const current = photoId !== null
@@ -242,6 +251,9 @@ export function GroupReview({
                       photo={photo}
                       visible={showComposition}
                     />
+                  )}
+                  {photo && photo.id === photoId && (
+                    <EyeOverlay photo={photo} visible={showEyes} />
                   )}
                 </>
               )}

@@ -38,6 +38,7 @@ const INSPECT: Item[] = [
     detail: "red = sharpest tiles in THIS frame — shows where focus landed",
   },
   { key: "O", label: "composition overlay", detail: "thirds grid + face boxes" },
+  { key: "B", label: "eye crops", detail: "full-res eyes of the primary face — blink check" },
   { key: "E", label: "evidence panel", detail: "per-metric scores behind the verdict" },
   { key: "?", label: "this list" },
 ];
