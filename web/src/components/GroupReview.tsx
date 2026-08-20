@@ -70,7 +70,6 @@ export function GroupReview({
 
   // Thumbnail prefetch ±5 (design 11 §9): J/K scrubbing must not wait on
   // decode round-trips. The browser cache does the storing; we just warm it.
-  // Adjacent groups' FIRST frames too: ↑/↓ skimming always lands there.
   useEffect(() => {
     if (!group) return;
     for (let d = -5; d <= 5; d++) {
@@ -79,13 +78,23 @@ export function GroupReview({
         new Image().src = thumbUrl(pid, 2048);
       }
     }
-    for (const gi of [groupIdx + 1, groupIdx - 1]) {
-      const pid = groups?.[gi]?.photo_ids[0];
+  }, [group, frameIdx]);
+
+  // Rolling warm-ahead window for GROUP skimming: first frame of the next
+  // 20 groups (and 3 back) from the current position. A fixed lead-in only
+  // helped the first dozen groups; past it every ↓ went cold again
+  // (user-reported). Server caches by content → re-requests are free.
+  useEffect(() => {
+    if (!groups) return;
+    const ahead = groups.slice(groupIdx + 1, groupIdx + 21);
+    const behind = groups.slice(Math.max(0, groupIdx - 3), groupIdx);
+    for (const g of [...ahead, ...behind]) {
+      const pid = g.photo_ids[0];
       if (pid !== undefined) {
         new Image().src = thumbUrl(pid, 2048);
       }
     }
-  }, [group, frameIdx, groups, groupIdx]);
+  }, [groups, groupIdx]);
 
   const clampFrame = (g: Group | undefined, i: number) =>
     g ? Math.max(0, Math.min(g.photo_ids.length - 1, i)) : 0;

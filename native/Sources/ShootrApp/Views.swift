@@ -881,7 +881,9 @@ struct LoupeView: View {
                                 if model.showEyes,
                                    let photo = model.photo,
                                    photo.id == loadedFor {
-                                    EyeOverlay(photo: photo)
+                                    FittedOverlay(imageSize: image.size) {
+                                        EyeOverlay(photo: photo)
+                                    }
                                 }
                             }
                     }

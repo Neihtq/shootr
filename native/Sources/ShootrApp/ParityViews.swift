@@ -323,62 +323,74 @@ struct SharpnessOverlay: View {
     }
 }
 
-// MARK: - Eye overlay (design 11 §3): is the subject blinking?
+// MARK: - Eye overlay (design 11 §3): who is blinking?
 
-/// Full-res eye-band crops of the primary face, floated over the loupe.
-/// The loupe shows the whole frame; a blink is invisible at fit zoom — this
-/// answers it without leaving the photo or opening 100% zoom. Values shown
-/// beside each crop so the number and the pixels can be checked against
-/// each other (design 04 §1: every score inspectable).
+/// A marker on EVERY face's eye region with that face's eyes-open value —
+/// in place, so a group shot answers "who blinked" at a glance. Color +
+/// number, never color alone: green ≥ open boundary, amber in the partial-
+/// blink band, red below the "eyes closed" cut (matches the calibrated
+/// culling boundary, design 04 §2.2); gray "—" = detector abstained.
 struct EyeOverlay: View {
     let photo: PhotoDetail
 
     var body: some View {
-        if let face = photo.faces.first {
-            HStack(spacing: 8) {
-                // Image-left first: subject's RIGHT eye is on image left
-                // for a camera-facing subject.
-                eyePane(photoId: photo.id, face: face, eye: "right")
-                eyePane(photoId: photo.id, face: face, eye: "left")
+        GeometryReader { geo in
+            if photo.faces.isEmpty {
+                Text("no face detected")
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.72), in: Capsule())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .bottomTrailing)
+                    .padding(10)
             }
-            .padding(8)
-            .background(.black.opacity(0.72),
-                        in: RoundedRectangle(cornerRadius: 8))
-            .frame(maxWidth: .infinity, maxHeight: .infinity,
-                   alignment: .bottomTrailing)
-            .padding(10)
-            .allowsHitTesting(false)
-        } else {
-            Text("no face detected")
-                .font(Theme.micro)
-                .foregroundStyle(Theme.inkSecondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(.black.opacity(0.72), in: Capsule())
-                .frame(maxWidth: .infinity, maxHeight: .infinity,
-                       alignment: .bottomTrailing)
-                .padding(10)
-                .allowsHitTesting(false)
+            ForEach(photo.faces, id: \.idx) { f in
+                if f.bbox.count == 4 {
+                    // Eye band: upper part of the face box (55–100% of its
+                    // height — same heuristic as the eye-crop endpoint;
+                    // landmarks aren't persisted in M1). Vision origin is
+                    // bottom-left; SwiftUI top-left.
+                    let x = f.bbox[0] * geo.size.width
+                    let w = f.bbox[2] * geo.size.width
+                    let bandH = f.bbox[3] * 0.45 * geo.size.height
+                    let y = (1 - f.bbox[1] - f.bbox[3]) * geo.size.height
+                    let open = worstOpen(f)
+                    let color = openColor(open)
+
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(color, lineWidth: 1.5)
+                        .frame(width: w, height: bandH)
+                        .position(x: x + w / 2, y: y + bandH / 2)
+                    // Score chip pinned above the band.
+                    HStack(spacing: 3) {
+                        StateSwatch(color: color)
+                        Text(open.map { String(format: "%.2f", $0) } ?? "—")
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.ink)
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(.black.opacity(0.72), in: Capsule())
+                    .position(x: x + w / 2, y: max(9, y - 11))
+                }
+            }
         }
+        .allowsHitTesting(false)
     }
 
-    private func eyePane(photoId: Int, face: FaceInfo,
-                         eye: String) -> some View {
-        VStack(spacing: 3) {
-            AsyncImage(url: APIClient().eyeCropURL(
-                photoId: photoId, face: face.idx, eye: eye)) {
-                $0.resizable().aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Rectangle().fill(Theme.surfaceRaised)
-            }
-            .frame(width: 148, height: 96)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            let info = face.eyes[eye]
-            Text("\(eye) · open "
-                 + (info?.open.map { String(format: "%.2f", $0) } ?? "—"))
-                .font(Theme.micro)
-                .foregroundStyle(Theme.inkSecondary)
-        }
+    /// min of the two eyes — one closed eye is a blink (design 04 §2.2).
+    private func worstOpen(_ f: FaceInfo) -> Double? {
+        let vals = ["left", "right"].compactMap { f.eyes[$0]?.open }
+        return vals.min()
+    }
+
+    private func openColor(_ open: Double?) -> Color {
+        guard let open else { return Theme.inkMuted }  // abstained ≠ bad
+        if open < 0.42 { return Color(hex: 0xE5484D) }  // eyes closed
+        if open < 0.65 { return Theme.bracket }         // partial blink
+        return Theme.pick                               // open
     }
 }
 

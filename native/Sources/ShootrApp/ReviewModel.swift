@@ -232,12 +232,27 @@ final class ReviewModel {
 
     /// Entering a shoot is the coldest moment: nothing is prefetched yet,
     /// and skimming ↓ through the sidebar hits one cache miss per group.
-    /// Warm the first frame of the leading groups via the thumb endpoint —
-    /// the server caches by content, so this is one-time work per library.
     private func warmLeadingGroups() {
-        let firsts = groups.prefix(12).compactMap(\.photoIds.first)
-        Task.detached(priority: .background) {
+        warmGroupWindow()
+    }
+
+    /// Rolling warm-ahead window: the first frame of the next groups from
+    /// the CURRENT position — a fixed lead-in only helped the first dozen,
+    /// and skimming past it went cold again (user-reported). The window
+    /// follows the cursor; the server caches by content, so re-requests
+    /// are free and one background task at a time is plenty.
+    private var warmTask: Task<Void, Never>?
+
+    private func warmGroupWindow() {
+        let ahead = groups.dropFirst(groupIndex + 1).prefix(20)
+        let behind = groups.prefix(groupIndex).suffix(3)
+        let firsts = (Array(ahead) + Array(behind))
+            .compactMap(\.photoIds.first)
+        guard !firsts.isEmpty else { return }
+        warmTask?.cancel()
+        warmTask = Task.detached(priority: .background) {
             for pid in firsts {
+                if Task.isCancelled { return }
                 let url = APIClient().thumbURL(photoId: pid, size: 2048)
                 _ = try? await URLSession.shared.data(from: url)
             }
@@ -274,6 +289,7 @@ final class ReviewModel {
                 candidates.append(first)
             }
         }
+        warmGroupWindow()
         guard !candidates.isEmpty else { return }
         Task {
             var details: [PhotoDetail] = []
