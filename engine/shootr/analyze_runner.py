@@ -9,14 +9,19 @@ the checkpointing contract (this module + jobs.py) doesn't change.
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from . import helper, jobs
 
-BATCH_SIZE = 48  # 32–64 (design 03 §4): amortize startup, bound blast radius
+# 32–64 (design 03 §4): amortize startup, bound blast radius. Overridable:
+# the Python analyzer pays model loading per process, which amortizes
+# better at 128+ (design 13).
+BATCH_SIZE = int(os.environ.get("SHOOTR_BATCH_SIZE", 48))
 
 # analyzer(files, scale) -> yields per-photo dicts. Injectable for tests.
 Analyzer = Callable[[list[Path], float], Iterator[dict]]
@@ -129,18 +134,23 @@ def _persist(conn: sqlite3.Connection, photo_id: int, result: dict) -> None:
         for f in result.get("faces", []):
             eyes = f.get("eyes", {})
             left, right = eyes.get("l", {}), eyes.get("r", {})
+            # Faceprint: base64 f32 identity embedding. The Swift helper
+            # emits null (Vision path deferred); the Python analyzer fills
+            # it — person clustering's input (design 05 §5).
+            fp = f.get("faceprint")
             conn.execute(
                 "INSERT INTO face (photo_id, idx, bbox, roll, yaw, pitch, "
                 "capture_quality, eye_sharp_l, eye_sharp_r, eye_open_l, "
-                "eye_open_r, eye_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "eye_open_r, eye_source, faceprint) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (photo_id, f["idx"], json.dumps(f["bbox"]), f.get("roll"),
                  f.get("yaw"), f.get("pitch"), f.get("capture_quality"),
                  left.get("sharp_norm"), right.get("sharp_norm"),
                  left.get("open"), right.get("open"),
-                 f.get("eye_source", "unknown")),
+                 f.get("eye_source", "unknown"),
+                 base64.b64decode(fp) if fp else None),
             )
         if result.get("embedding"):
-            import base64
             conn.execute(
                 "INSERT OR REPLACE INTO embedding (photo_id, kind, vec, dim) "
                 "VALUES (?, 'scene', ?, ?)",

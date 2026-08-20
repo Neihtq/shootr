@@ -1,0 +1,34 @@
+[project]
+name = "shootr-analyzer"
+version = "0.1.0"
+description = "Shootr cross-platform analyzer — RAW decode, faces, sharpness, embeddings (design 13)"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "rawpy",                    # libraw bundled — measurement decode + CFA access
+    "onnxruntime",              # SCRFD / ArcFace / DINOv2 / BiRefNet sessions
+    # FaceLandmarker blendshapes (blink). <1.0: the 1.0.x wheels' Metal
+    # initialization aborts the process on macOS 26 (DrishtiMetalHelper
+    # "Service is unavailable", SIGABRT — observed 2026-08-20, not
+    # configurable away); 0.10.35 works on CPU.
+    "mediapipe<1.0",
+    "opencv-python-headless",   # resize/Sobel/Hough — headless: no GUI deps on servers
+    "exifread",                 # probe without pixel decode
+    "pillow",                   # JPEG encode for render
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+shootr-analyze-py = "shootr_analyzer.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["shootr_analyzer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

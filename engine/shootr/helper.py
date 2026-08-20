@@ -30,6 +30,16 @@ def helper_path() -> Path:
     return Path(env) if env else DEFAULT_HELPER
 
 
+def render_helper_path() -> Path:
+    """Display decode may use a different binary than measurement (design 13
+    §2.2): on macOS, SHOOTR_HELPER can point at the cross-platform analyzer
+    while thumbnails stay on the Swift helper's CIRAWFilter rendering —
+    Apple's per-camera display output is visibly better than libraw's.
+    Measurement semantics are unaffected; this is viewing-only."""
+    env = os.environ.get("SHOOTR_RENDER_HELPER")
+    return Path(env) if env else helper_path()
+
+
 def helper_available() -> bool:
     return helper_path().is_file()
 
@@ -41,7 +51,9 @@ def helper_available() -> bool:
 # job would keep the shoot locked with no way out. Per-line rather than
 # total: a large batch is legitimately slow, a stalled one is silent.
 # 120 s is ~40x the p99 single-photo analyze (~1.4 s at scale 0.5).
-STALL_TIMEOUT_S = 120.0
+# Overridable because the Python analyzer's FIRST photo of a process pays
+# model loading (~10 s CPU sessions; minutes if a provider compiles).
+STALL_TIMEOUT_S = float(os.environ.get("SHOOTR_STALL_TIMEOUT", 120.0))
 
 # Probe reads EXIF only (~1.7 ms/file measured), so silence means stuck, not
 # slow. Kept well above the timeout an ingest of a cold external drive needs
@@ -172,7 +184,7 @@ def probe_many(paths: list[Path], chunk: int = 400) -> dict[str, dict]:
 
 def render(raw: Path, out: Path, size: int = 2048) -> None:
     subprocess.run(
-        [str(helper_path()), "render", "--file", str(raw),
+        [str(render_helper_path()), "render", "--file", str(raw),
          "--size", str(size), "--out", str(out)],
         check=True, capture_output=True,
     )
