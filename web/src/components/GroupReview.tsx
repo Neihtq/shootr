@@ -11,6 +11,7 @@ import {
   useOverrideEntry,
   usePhoto,
   useSelection,
+  useShoots,
 } from "../api/hooks";
 import { thumbUrl } from "../api/client";
 import type { Group, Selection, SelectionState } from "../api/types";
@@ -20,6 +21,7 @@ import { CompositionOverlay } from "./CompositionOverlay";
 import { EvidencePanel } from "./EvidencePanel";
 import { EyeCrops } from "./EyeCrops";
 import { SharpnessOverlay } from "./SharpnessOverlay";
+import { KeyHints, ShortcutsDialog } from "./ShortcutsDialog";
 import { useKeyboard } from "../keyboard";
 
 const STATE_STYLES: Record<SelectionState, string> = {
@@ -47,6 +49,13 @@ export function GroupReview({
   const [showComposition, setShowComposition] = useState(false);
   const [showEvidence, setShowEvidence] = useState(true);
   const [comparing, setComparing] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // The shortcut dialog names the genre the verdicts were computed under —
+  // "pick" means something different for street than for portrait.
+  const { data: shoots } = useShoots();
+  const profile =
+    shoots?.find((s) => s.id === shootId)?.profile ?? "this shoot's genre";
 
   const entryByPhoto = useMemo(() => {
     const m = new Map<number, Selection["entries"][number]>();
@@ -97,13 +106,25 @@ export function GroupReview({
     onToggleSharpness: () => setShowSharpness((v) => !v),
     onToggleCompare: () => setComparing((v) => !v),
     onToggleComposition: () => setShowComposition((v) => !v),
+    onShowShortcuts: () => setShowShortcuts(true),
     onTogglePick: () => {
       const current = photoId !== null
         ? entryByPhoto.get(photoId)?.state : undefined;
       setState(current === "pick" ? "reject" : "pick");
     },
-    enabled: !comparing, // CompareView owns the keyboard while open
+    // CompareView and the shortcut dialog own the keyboard while open.
+    enabled: !comparing && !showShortcuts,
   });
+
+  // Esc closes the dialog — it's modal, so the review bindings are inert.
+  useEffect(() => {
+    if (!showShortcuts) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setShowShortcuts(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showShortcuts]);
 
   // Compare the current frame against the group's other top-ranked frames:
   // the pick-vs-alt judgement is what compare exists for (design 11 §4).
@@ -243,8 +264,16 @@ export function GroupReview({
                   label={showSharpness ? "S map ✓" : "S map"}
                   onClick={() => setShowSharpness((v) => !v)}
                 />
+                <Key label="?" onClick={() => setShowShortcuts(true)} />
               </div>
             )}
+
+            {/* Always visible, including on bracket groups where the action
+                bar above is suppressed — that's exactly when a user needs to
+                be told why there are no cull controls. */}
+            <div className="flex items-center border-t border-neutral-800 px-3 py-1">
+              <KeyHints onShowAll={() => setShowShortcuts(true)} />
+            </div>
           </>
         )}
       </main>
@@ -255,6 +284,13 @@ export function GroupReview({
           <EvidencePanel photo={photo} />
           <EyeCrops photo={photo} />
         </aside>
+      )}
+
+      {showShortcuts && (
+        <ShortcutsDialog
+          profile={profile}
+          onClose={() => setShowShortcuts(false)}
+        />
       )}
 
       {comparing && compareIds.length >= 2 && (

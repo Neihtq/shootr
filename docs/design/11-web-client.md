@@ -75,6 +75,13 @@ Three overlays make abstract numbers verifiable on the actual pixels:
 The sharpness map is what makes "focus missed — it hit the shoulder" (§04.2's key failure
 mode) legible in one glance instead of a claim the user has to take on faith.
 
+Tile intensity is **normalized to the frame's own maximum**, not to an absolute scale, so
+the map always locates the sharpest region rather than grading the photo — a uniformly soft
+frame still lights up wherever it's least soft. That's the right behavior for "where did
+focus land?" and the wrong answer to "is this sharp enough?", which is the score's job. The
+UI has to say which question it's answering (`?` list, §5): without a label the overlay
+reads as unexplained red rectangles and gets ignored.
+
 `null` components render as "—", never a zero bar (§10.3). Displaying "not measured" as
 "scored zero" would make every landscape look broken.
 
@@ -102,12 +109,25 @@ Culling is repetitive; mouse-driven review is too slow to be worth using.
 J / K or ← →   prev / next frame        P   pick
 Space          toggle pick               X   reject
 Z              100% / fit                A   promote alt
-1-5            set rating                G   next group
-C              compare mode              ⇧G  prev group
-E              evidence panel            /   filter
+C              compare mode              G   next group
+E              evidence panel            ⇧G  prev group
+S              sharpness heatmap         O   composition overlay
+?              shortcut list             Esc back / close
 ```
 
 Modeled on LrC's own bindings (`P`/`X`, `J`/`K`) so it doesn't fight existing muscle memory.
+
+**The bindings are shown in the UI, not only in the README.** A compact strip sits in the
+action bar permanently; `?` (and clicking the strip) opens the full list. `?` is a modal
+that also explains **how the engine reached its verdicts** — the pick/alt/reject rules of
+§06.2 in plain language, naming the shoot's genre. Rationale: a user who doesn't know the
+verdicts are automatic, or on what basis, can't sensibly disagree with them, and an overlay
+they can't name (the `S` heatmap reads as "red rectangles") is one they won't trust. Both
+clients render identical wording — two frontends explaining the same behavior differently is
+the same class of bug as two frontends scoring differently (§01 invariant 6).
+
+Bind the unshifted `/` to the shortcut list alongside `?`: `?` is shift-`/` on US layouts
+but not everywhere, and the unshifted key is what gets pressed.
 
 Every user action posts to `PATCH /api/selections/{id}/entries/{pid}`, setting
 `user_override=1` (§06.4). Optimistic UI with rollback on error — at this interaction speed,

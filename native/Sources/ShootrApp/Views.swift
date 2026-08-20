@@ -401,6 +401,9 @@ struct GroupReviewView: View {
         .sheet(isPresented: $model.comparing) {
             CompareSheet(photoIds: model.compareIds, model: model)
         }
+        .sheet(isPresented: $model.showShortcuts) {
+            ShortcutsSheet(profile: model.shoot?.profile ?? "event")
+        }
     }
 
     private var header: some View {
@@ -524,7 +527,7 @@ struct GroupReviewView: View {
                     .font(Theme.value)
                     .foregroundStyle(Theme.inkSecondary)
             }
-            KeyHints()
+            KeyHints { model.showShortcuts = true }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -620,28 +623,215 @@ struct FilmstripThumb: View {
     }
 }
 
-struct KeyHints: View {
-    private let hints: [(String, String)] = [
-        ("P", "pick"), ("A", "alt"), ("X", "reject"), ("␣", "toggle"),
-        ("← →", "frames"), ("↑ ↓", "groups"), ("Z", "100%"),
+/// The one canonical shortcut list, shared by the action-bar strip and the
+/// `?` sheet so they can never disagree. Grouped the way the work is done:
+/// move, judge, inspect.
+enum Shortcuts {
+    struct Item: Identifiable {
+        let key: String
+        let label: String
+        /// Longer gloss for the sheet — the action-bar strip shows `label`
+        /// only. Overlays get one because a red grid with no name is not
+        /// evidence the user can act on.
+        let detail: String?
+        var id: String { key }
+
+        init(_ key: String, _ label: String, _ detail: String? = nil) {
+            self.key = key
+            self.label = label
+            self.detail = detail
+        }
+    }
+
+    static let navigate: [Item] = [
+        Item("← →", "prev / next frame", "also J / K"),
+        Item("↑ ↓", "prev / next group", "also G / ⇧G"),
+        Item("Home / End", "first / last frame in group"),
+        Item("Esc", "back to shoots"),
     ]
+
+    static let judge: [Item] = [
+        Item("P", "pick", "recommended keeper — 3★ on export"),
+        Item("A", "alt", "credible runner-up — 2★ on export"),
+        Item("X", "reject", "not chosen; nothing is ever deleted"),
+        Item("␣", "toggle pick ↔ reject"),
+    ]
+
+    static let inspect: [Item] = [
+        Item("Z", "100% zoom", "snaps to the primary face; drag to pan"),
+        Item("C", "compare", "current frame vs the group's runner-ups"),
+        Item("S", "sharpness heatmap",
+             "red = sharpest tiles in THIS frame — shows where focus landed"),
+        Item("O", "composition overlay", "thirds grid + face boxes"),
+        Item("E", "evidence panel", "per-metric scores behind the verdict"),
+        Item("?", "this list"),
+    ]
+
+    /// The compact subset for the always-visible strip.
+    static let strip: [Item] = [
+        Item("P", "pick"), Item("A", "alt"), Item("X", "reject"),
+        Item("S", "sharpness"), Item("O", "faces"), Item("?", "keys"),
+    ]
+}
+
+struct KeyHints: View {
+    /// Tapping the strip opens the full sheet — the shortcuts have to be
+    /// reachable by mouse too, or they're only discoverable by already
+    /// knowing them.
+    var onShowAll: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 10) {
-            ForEach(hints, id: \.0) { key, label in
+            ForEach(Shortcuts.strip) { item in
                 HStack(spacing: 3) {
-                    Text(key)
-                        .font(Theme.micro)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1.5)
-                        .background(Theme.surfaceRaised,
-                                    in: RoundedRectangle(cornerRadius: 3))
-                    Text(label)
+                    KeyCap(item.key)
+                    Text(item.label)
                         .font(Theme.micro)
                         .foregroundStyle(Theme.inkMuted)
                 }
             }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onShowAll?() }
+        .help("Show all keyboard shortcuts (?)")
+    }
+}
+
+struct KeyCap: View {
+    let key: String
+    init(_ key: String) { self.key = key }
+
+    var body: some View {
+        Text(key)
+            .font(Theme.micro)
+            .foregroundStyle(Theme.inkSecondary)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1.5)
+            .background(Theme.surfaceRaised,
+                        in: RoundedRectangle(cornerRadius: 3))
+    }
+}
+
+/// `?` — the full shortcut reference, plus how the engine reached its
+/// verdicts. Both were README-only before, which is the wrong place for
+/// something you need while looking at a photo.
+struct ShortcutsSheet: View {
+    let profile: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Keyboard")
+                    .font(Theme.heading)
+                    .foregroundStyle(Theme.ink)
+                Spacer()
+                Button("Close") { dismiss() }
+                    .font(Theme.caption)
+            }
+            .padding(.bottom, 14)
+
+            HStack(alignment: .top, spacing: 26) {
+                section("Move", Shortcuts.navigate)
+                section("Judge", Shortcuts.judge)
+                section("Inspect", Shortcuts.inspect)
+            }
+
+            Divider().overlay(Theme.hairline).padding(.vertical, 14)
+
+            HowVerdictsWork(profile: profile)
+        }
+        .padding(20)
+        .frame(width: 720)
+        .background(Theme.surface)
+        .onKeyPress(.escape) { dismiss(); return .handled }
+    }
+
+    private func section(_ title: String,
+                         _ items: [Shortcuts.Item]) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title.uppercased())
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+                .padding(.bottom, 1)
+            ForEach(items) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    KeyCap(item.key)
+                        .frame(width: 54, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.label)
+                            .font(Theme.caption)
+                            .foregroundStyle(Theme.inkSecondary)
+                        if let detail = item.detail {
+                            Text(detail)
+                                .font(Theme.micro)
+                                .foregroundStyle(Theme.inkMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The engine proposes every pick/alt/reject; a user who doesn't know that,
+/// or on what basis, can't sensibly disagree with it (design 06 §1).
+struct HowVerdictsWork: View {
+    let profile: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("HOW THE VERDICTS ARE CHOSEN")
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+
+            Text("Every pick / alt / reject is proposed automatically, per "
+                 + "group, from each frame's quality score under this "
+                 + "shoot's genre (\(profile)). Your changes always win and "
+                 + "survive re-culling.")
+                .font(Theme.caption)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                rule(Theme.bracket, "Exposure bracket",
+                     "every frame kept — brackets are never culled.")
+                rule(Theme.pick, "Best few in the group",
+                     "ranked by score, with a penalty for looking too much "
+                     + "like a frame already picked, then a preference for "
+                     + "fewest blinking subjects.")
+                rule(Theme.alt, "Next one down",
+                     "the runner-up, kept for comparison. Also where a whole "
+                     + "group lands when no frame clears the quality floor — "
+                     + "the engine declines to recommend rather than guess.")
+                rule(Theme.reject, "Everything else",
+                     "not chosen. Nothing is deleted or moved, and rejects "
+                     + "write nothing on export.")
+            }
+
+            Text("The reason for the current frame is always in the bar "
+                 + "below the photo; press E for the per-metric scores "
+                 + "behind it.")
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func rule(_ color: Color, _ title: String,
+                      _ text: String) -> some View {
+        // Swatch beside the words, never color-carrying-meaning alone.
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            StateSwatch(color: color)
+            Group {
+                Text(title + " — ").foregroundStyle(Theme.inkSecondary)
+                    + Text(text).foregroundStyle(Theme.inkMuted)
+            }
+            .font(Theme.caption)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -964,7 +1154,8 @@ struct KeyCatcher: NSViewRepresentable {
                 guard let self, let model = self.model else { return event }
                 // Sheets own the keyboard while open (compare handles its
                 // own Z; export/settings are form UIs).
-                if model.comparing || model.showExport || model.showSettings {
+                if model.comparing || model.showExport || model.showSettings
+                    || model.showShortcuts {
                     return event
                 }
                 // Don't steal keys from an active text field (the field
@@ -1022,6 +1213,9 @@ struct KeyCatcher: NSViewRepresentable {
             case "z": model.zoomed.toggle()
             case "s": model.showSharpness.toggle()
             case "o": model.showComposition.toggle()
+            // "/" too: ? is shift-/ on US layouts but not on every layout,
+            // and the unshifted key is what people actually press.
+            case "?", "/": model.showShortcuts = true
             case "c":
                 if model.compareIds.count >= 2 { model.comparing.toggle() }
             default: return false

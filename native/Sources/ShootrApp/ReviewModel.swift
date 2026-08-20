@@ -28,6 +28,10 @@ final class ReviewModel {
     var comparing = false  // C — synced compare sheet
     var showExport = false
     var showSettings = false
+    /// ? — the shortcut list. Discoverable in-app rather than README-only:
+    /// an overlay the user can't name (the S heatmap) is an overlay they
+    /// won't trust.
+    var showShortcuts = false
 
     /// Compare the current frame against the group's top-ranked others
     /// (the pick-vs-alt judgement, design 11 §4).

@@ -16,6 +16,7 @@ export interface KeyboardHandlers {
   onToggleCompare?: () => void;
   onTogglePick?: () => void;
   onToggleComposition?: () => void;
+  onShowShortcuts?: () => void;
   /** Disable while a modal (compare view) owns the keyboard. */
   enabled?: boolean;
 }
@@ -64,6 +65,12 @@ export function useKeyboard(h: KeyboardHandlers) {
           break;
         case " ":
           h.onTogglePick?.();
+          break;
+        // "/" too: ? is shift-/ on US layouts but not on every layout, and
+        // the unshifted key is what people actually press.
+        case "?":
+        case "/":
+          h.onShowShortcuts?.();
           break;
         case "ArrowUp":
           h.onPrevGroup();

@@ -63,7 +63,9 @@ divergence the API seam exists to prevent.
 ## 3. Scope
 
 **Ships with:** shoot list, group review, evidence panel, compare view with synced zoom,
-keyboard culling, export dialog.
+keyboard culling, export dialog, and the `?` shortcut/verdict reference (§11.5 — same keys
+and same wording as the web client; the explanation of *why* a frame is a pick must not
+differ between clients any more than the pick itself does).
 
 **Deliberately omitted:** library setup, catalog import, weight tuning, style-family
 management. These are configuration done once, they're the fastest-moving parts of the API,
