@@ -5,6 +5,13 @@
 The compiled Swift helper. Decodes RAW, runs Vision, measures sharpness, emits JSON.
 This is the only component that touches pixels.
 
+> **Lifespan note ([13](13-portability.md), 2026-08-20):** Windows/Linux are on the
+> roadmap, so post-M2 a cross-platform analyzer (onnxruntime + libraw) implementing
+> this same JSONL contract (§4) becomes canonical on all platforms; this Swift
+> helper then persists only as the macOS display-path renderer. The contract, the
+> correctness rules (§2), and the sharpness design (§3) all carry over unchanged —
+> they are decode-source-agnostic by construction.
+
 ---
 
 ## 1. Why a separate Swift binary

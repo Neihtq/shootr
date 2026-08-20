@@ -45,6 +45,7 @@ Detailed design per domain. Parent requirements: [`../../SPEC.md`](../../SPEC.md
 | [10](10-api.md) | API contract | HTTP surface both clients share | M1 |
 | [11](11-web-client.md) | Web client | React review UI | M1 |
 | [12](12-native-client.md) | Native client | SwiftUI app | M4 |
+| [13](13-portability.md) | Portability | Windows/Linux; the canonical cross-platform measurement stack | post-M2 |
 
 ## Cross-cutting rules
 
@@ -61,6 +62,11 @@ These bind every document. Violations are bugs, not trade-offs.
 7. **All work is resumable.** External drives get unplugged mid-shoot. (§09)
 
 ## Platform capabilities (verified 2026-07-30)
+
+> **Superseded in direction by [13](13-portability.md) (2026-08-20):** Windows and
+> Linux are on the roadmap, so the cross-platform stack becomes the canonical
+> analyzer post-M2 and Vision/Core Image retreat to the macOS display path. The
+> table below remains accurate for what ships in M1–M2 on this machine.
 
 Vision covers more than initially assumed, which removes three dependencies:
 

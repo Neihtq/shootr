@@ -16,7 +16,12 @@ update the owning doc too (CLAUDE.md rule).
   - Default decode scale (0.25 / 0.5 / 1.0 sweep)
   - Whether Sony ARW embedded preview is usable at all
   - Per-photo latency → validates the 3k–10k interactive target (or reframes as overnight batch)
-  - Which blink detector ships (EAR vs. MediaPipe vs. ONNX, against hand-labelled frames)
+  - ~~Which blink detector ships (against hand-labelled frames)~~ — tooling
+    (`engine/tools/label_blinks.py`) + first round done 2026-08-20: 33 faces
+    labelled; **blendshapes separate cleanly (FR/FA 0%) where EAR overlaps**
+    (FR 4.3%/FA 16.7% at its best cut). Per-source calibrated curves shipped
+    (`EYES_OPEN_CURVES`, 04 §2.2). Provisional at n=6 closed — grow the labelled
+    set opportunistically; refit in M2
 - Obtain sample folder + LrC catalog copy from user (`SPEC §11`)
 - Confirm LrC version and whether "Automatically write changes into XMP" is enabled
 
@@ -260,6 +265,54 @@ outcome and can be built now.
 
 - Collections + flags/ratings set from inside LrC (best UX, no catalog risk)
 - Only if M1's manual "Read Metadata from File" flow proves too clunky
+
+## Post-M2 — Portability (Windows, Linux) — direction set 2026-08-20, design 13
+
+Decision: Windows and Linux are on the roadmap → the cross-platform measurement
+stack becomes canonical on ALL platforms (one measurement semantics everywhere;
+per-platform analyzer forks are forbidden — same class of bug as client-side
+scoring). Vision/Core Image retreat to the macOS display path. Full rationale,
+component table, and adoption criteria: `docs/design/13-portability.md`.
+
+Model tier (user decision, same date): accuracy-first — SOTA models where
+sensible, large weights and slower culling accepted. Hardware floor = **M4
+MacBook 24 GB** (the i9/RTX 2070S machine is transitional and gates nothing).
+Candidates: DINOv2 ViT-L embedding, AdaFace IR-101 identity, SCRFD-10G faces,
+ViTPose-L, BiRefNet subject segmentation (retires the saliency "honest loss").
+Sharpness stays Tenengrad — evidence rule outranks benchmarks (13 §1.5, §2.1).
+
+Arriving early on their own merits (accuracy, not portability):
+- Blink via MediaPipe blendshapes, validated against hand-labelled frames
+  (03 §5 — was already the plan; it's also a canonical-stack component)
+- ArcFace/SCRFD (InsightFace) when faceprint extraction lands — fixes 05 §5's
+  stated Vision weaknesses on Mac too
+
+Analyzer built 2026-08-20 (`analyzer/`, console script `shootr-analyze-py`;
+swap in via `SHOOTR_HELPER`). Adoption remains a post-A/B user decision:
+- ~~Canonical analyzer: second implementation of the 03 §4 JSONL contract
+  (Python + onnxruntime + rawpy/libraw, no Swift)~~ *(decode/sharpness ports
+  numerically Swift-parity-tested; SCRFD-10G faces, MediaPipe blendshapes
+  blink, ArcFace faceprints, DINOv2-L embedding, BiRefNet saliency, classical
+  horizon; model registry with pinned sha256 download-on-first-run; probe
+  includes a CR3 ISO-BMFF CMT walker — exifread can't read CR3 containers)~~
+- ~~A/B harness~~ (`engine/tools/ab_analyzers.py`): sharpness Spearman, face/
+  eye-open side-by-side (the blink labelling aid), embedding neighbor Jaccard,
+  grouping stability (05 thresholds are embedding-specific — re-measure,
+  don't reuse), timing → 10k projection vs the overnight-on-M4 bar
+- ~~First gate run~~ (60 real CR3s, `docs/benchmarks/2026-08-20-analyzer-ab-60.md`):
+  sharpness ρ 0.812 · faces 77 vs 56 (recall edge, unverified) · blendshapes
+  discriminate where EAR saturates · grouping stable untuned (15 vs 14 groups)
+  · **python 14.4 h/10k = OVER the overnight bar — optimize before adoption**
+  (batch inference, fp16, skip BiRefNet 1024² at 0.5 scale)
+- Component-wise adoption after A/B + labelled frames; single `engine_version`
+  cutover (`py-0.1.0+<registry-hash>`); eat the re-analysis while small
+- AdaFace IR-101 still unpinned (no official ONNX artifact) — ArcFace R50
+  floor active; CoreML EP measured pathological on DINOv2-L (~20 min compile,
+  then fails) → CPU default on macOS, `SHOOTR_ORT_PROVIDERS` to override
+- Web client absorbs remaining native-only control-panel features (library
+  management) — on non-Mac platforms web is the only surface
+- Then the ports are packaging + platform ingest (volume identity/offline
+  semantics on NTFS/ext4, 02 §)
 
 ---
 

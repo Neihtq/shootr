@@ -64,6 +64,13 @@ separate from `score` (cheap, profile-dependent, always recomputable). This is w
 retuning weights or changing a shoot's genre costs milliseconds instead of re-decoding
 10,000 files. Never conflate them; never make `score` the cache key.
 
+**Platform direction (2026-08-20):** Windows and Linux are on the roadmap (design 13).
+One measurement semantics everywhere — a per-platform analyzer fork is the same class
+of bug as client-side scoring. Post-M2, a cross-platform analyzer (onnxruntime +
+libraw) behind the same JSONL contract becomes canonical on all platforms;
+Vision/CIRAWFilter survive only in the macOS display path. Don't add new
+Vision-dependent *measurement* features without checking design 13's component table.
+
 **Photo identity is content-based**, not path-based: `blake3(size ‖ first 64KB ‖ last 64KB)`.
 External drives remount at different paths.
 

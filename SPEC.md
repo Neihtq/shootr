@@ -39,6 +39,18 @@ on-device.
 - **First milestone:** cull loop on real photos, reviewable in web app, writing picks to XMP + LrC.
 - **Throughput target:** 3,000–10,000 photos/shoot → resumable, checkpointed batch pipeline.
 - **Edit delivery:** per-photo XMP sidecar `crs:` values (with the safety rules in §7).
+- **Platforms (added 2026-08-20):** macOS first; **Windows and Linux eventually.**
+  Consequence: post-M2 the measurement stack goes cross-platform-canonical
+  (onnxruntime + libraw behind the same helper contract) on *all* platforms — one
+  measurement semantics everywhere, no per-platform analyzer forks. Vision/Core
+  Image remain only in the macOS display path; non-Mac platforms get the web UI
+  only. Design: `docs/design/13-portability.md`.
+- **Accuracy over speed (added 2026-08-20):** state-of-the-art models where
+  sensible; large weights and slower culling accepted. **Hardware floor: Apple
+  Silicon M4 MacBook, 24 GB** (an i9 + RTX 2070 Super machine is transitional —
+  must run, constrains nothing). Model budget: best model fitting the M4's
+  unified memory in fp16. Not neural at any budget: sharpness (Tenengrad) and
+  anything where the evidence rule outranks benchmarks. Design 13 §1.5.
 
 ---
 
