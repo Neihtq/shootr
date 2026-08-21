@@ -22,8 +22,17 @@
 > - Sharpness ranking Spearman **0.812** — decent, not identical; the top
 >   disagreements cluster in one burst (2I3A8815–8821) and need eyeballing.
 > - Face counts: **40/60 agree; python finds 77 faces to Vision's 56** —
->   consistent with SCRFD's expected recall edge on small/profile faces, but
->   "more" isn't verified as "correct" until spot-checked.
+>   spot-checked 2026-08-21 (user judged all 21 disputed detections,
+>   `docs/benchmarks/2026-08-21-face-recall/`): 8 real faces Vision missed
+>   entirely (Vision missed none the other way), 13 phantoms. Raw extras
+>   precision 38% — but **MediaPipe's landmarker second stage refused all
+>   13 phantoms and confirmed the 4 clear real faces**, and a refused face
+>   emits null eyes, so phantoms cannot feed blink/eye-focus (null ≠ 0).
+>   Residual exposure: detector score → capture_quality (weight 0.10) and
+>   primary-subject selection; phantom scores were low (median 0.59).
+>   Verdict: two-stage SCRFD+MediaPipe = real recall edge, phantom-safe on
+>   the dominant metrics. Threshold raise rejected — it trades real faces
+>   for phantoms ~1:2 (overlapping score ranges).
 > - Eye-open: EAR saturates at 1.0 where blendshapes spread 0.31–0.99 — the
 >   discrimination the blink metric needs, pending labels.
 > - Embedding neighbor Jaccard **0.580**; grouping on untuned thresholds
