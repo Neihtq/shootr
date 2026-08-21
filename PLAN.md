@@ -307,9 +307,17 @@ swap in via `SHOOTR_HELPER`). Adoption remains a post-A/B user decision:
   (saliency 5.0 s → 1.1 s; was 70% of the budget) + largest-CC bbox (also fixes
   stray-activation boxes) + cached model_rgb → **median 2.12 s, 5.9 h/10k,
   WITHIN the overnight bar**, identical accuracy numbers
-  (`docs/benchmarks/2026-08-21-analyzer-ab-60-optimized.md`). Remaining
-  adoption items: spot-check face recall (77 vs 56), re-measure grouping
-  thresholds on the full shoot, ARW/RAF samples
+  (`docs/benchmarks/2026-08-21-analyzer-ab-60-optimized.md`)
+- ~~Face-recall spot-check~~ (user-judged all 21 disputed): 8 real recall wins,
+  13 phantoms ALL refused by the MediaPipe stage → phantom-safe on dominant
+  metrics (`docs/benchmarks/2026-08-21-face-recall/`)
+- ~~Grouping thresholds re-measured~~ on the full 1,232-frame shoot: DINOv2
+  needs its own set (0.35/0.45/0.18 → 225 groups, 95.5% boundary agreement,
+  no over-merge); constants switch in the cutover commit
+  (`docs/benchmarks/2026-08-21-dinov2-grouping-thresholds.md`)
+- Remaining adoption items: **ARW/RAF samples** (waiting on files), then the
+  cutover decision itself (engine_version bump + full re-analysis + threshold
+  constants + blendshapes curve becomes the live one)
 - Component-wise adoption after A/B + labelled frames; single `engine_version`
   cutover (`py-0.1.0+<registry-hash>`); eat the re-analysis while small
 - AdaFace IR-101 still unpinned (no official ONNX artifact) — ArcFace R50

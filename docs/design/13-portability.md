@@ -35,9 +35,16 @@
 >   for phantoms ~1:2 (overlapping score ranges).
 > - Eye-open: EAR saturates at 1.0 where blendshapes spread 0.31–0.99 — the
 >   discrimination the blink metric needs, pending labels.
-> - Embedding neighbor Jaccard **0.580**; grouping on untuned thresholds
->   14 vs 15 groups, same singleton count — surprisingly stable, but
->   thresholds still need re-measuring on the full shoot before adoption.
+> - Embedding neighbor Jaccard **0.580**; grouping thresholds re-measured on
+>   the FULL 1,232-frame shoot 2026-08-21
+>   (`docs/benchmarks/2026-08-21-dinov2-grouping-thresholds.md`): DINOv2's
+>   distance scale is tighter, so the Vision-tuned values over-split (301
+>   groups vs the reviewed 204). Measured DINOv2 set: step 0.35 / anchor
+>   0.45 / corroboration 0.18 → 225 groups, 95.5% boundary agreement with
+>   the reviewed structure, no over-merge found (largest group = one real
+>   43 s burst). Face-count flicker is 26% under BOTH detectors — a
+>   property of event shooting, corroboration stays mandatory. Constants
+>   switch in the cutover commit, not before.
 > - Throughput, M4, CPU EP: swift median 1.41 s → 3.9 h/10k; python was
 >   14.4 h/10k on the first run — **optimized 2026-08-21 to median 2.12 s →
 >   5.9 h/10k, WITHIN the overnight bar** at identical accuracy numbers
