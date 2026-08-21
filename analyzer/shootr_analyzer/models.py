@@ -110,14 +110,20 @@ REGISTRY: list[ModelSpec] = [
         filename="dinov2_vits14_reg.onnx",
     ),
     # -- Saliency / subject --------------------------------------------------
-    # Official BiRefNet ONNX release asset; hash verified 2026-08-20.
+    # Official BiRefNet ONNX release assets; hashes verified 2026-08-20/21.
+    # The 512² fp16 variant is deliberately preferred over the 1024² full
+    # model: the engine consumes only a centroid + coarse bbox (primary-
+    # subject selection, thirds/headroom flags), and on real shoot frames
+    # the two produce equivalent boxes while 512-fp16 runs 5x faster
+    # (1.07 s vs 5.03 s/photo CPU — was 70% of the entire analyze budget).
+    # Not a floor fallback: it IS the right tool for a bbox consumer.
     ModelSpec(
-        "saliency", "birefnet_general", "accuracy",
+        "saliency", "birefnet_general_512_fp16", "accuracy",
         url="https://github.com/ZhengPeng7/BiRefNet/releases/download/v1/"
-            "BiRefNet-general-epoch_244.onnx",
-        sha256="58f621f00f5d756097615970a88a7915"
-               "84600dcf7c45b18a0a6267535a1ebd3c",
-        filename="birefnet_general.onnx",
+            "BiRefNet-general-resolution_512x512-fp16-epoch_216.onnx",
+        sha256="18b64a270d3abe7d36e665500c3f2413"
+               "6bcaf7616771b4cb21c6e8c57fec7237",
+        filename="birefnet_512_fp16.onnx",
     ),
 ]
 

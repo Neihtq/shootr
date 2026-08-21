@@ -33,13 +33,20 @@ class Decoded:
     width: int             # of the decoded (possibly scaled) image
     height: int
 
+    _model_rgb_cache: np.ndarray | None = None
+
     def model_rgb(self) -> np.ndarray:
         """Input for semantic models (embedding/faces/saliency). The
         measurement decode is linear and un-white-balanced — correct for
         gradients, dim and green for a network trained on sRGB photos. Cheap
         per-pixel correction, NO second demosaic: gray-world WB + sRGB-ish
         gamma. Deterministic, platform-independent, and consistent across
-        the library — which is what embedding distances actually require."""
+        the library — which is what embedding distances actually require.
+
+        Cached: three consumers per photo (faces, embedding, saliency), and
+        recomputing cost ~0.1 s each on a half-size decode."""
+        if self._model_rgb_cache is not None:
+            return self._model_rgb_cache
         if self.mode == "jpeg":
             return self.rgb  # already display-space
         lin = self.rgb.astype(np.float32) / 255.0
@@ -47,7 +54,9 @@ class Decoded:
         gray = float(means.mean()) or 1.0
         gains = gray / np.maximum(means, 1e-4)
         lin = np.clip(lin * gains, 0.0, 1.0)
-        return (np.power(lin, 1 / 2.2) * 255.0).astype(np.uint8)
+        out = (np.power(lin, 1 / 2.2) * 255.0).astype(np.uint8)
+        self._model_rgb_cache = out
+        return out
 
 
 def _is_raw(path: Path) -> bool:

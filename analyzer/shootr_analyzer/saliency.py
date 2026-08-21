@@ -17,7 +17,6 @@ import numpy as np
 from .coords import bbox_norm_to_vision, clamp_bbox
 from .decode import Decoded
 
-_INPUT = 1024        # BiRefNet-general native resolution
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _MASK_THRESHOLD = 0.5
@@ -40,23 +39,33 @@ def attention_bbox(decoded: Decoded) -> list[float] | None:
     import cv2
 
     rgb = decoded.model_rgb()
-    h, w = rgb.shape[:2]
-    img = cv2.resize(rgb, (_INPUT, _INPUT), interpolation=cv2.INTER_AREA)
+    inp = _session.get_inputs()[0]
+    size = inp.shape[2] if isinstance(inp.shape[2], int) else 512
+    img = cv2.resize(rgb, (size, size), interpolation=cv2.INTER_AREA)
     x = (img.astype(np.float32) / 255.0 - _MEAN) / _STD
     x = x.transpose(2, 0, 1)[None]
+    if "float16" in inp.type:
+        x = x.astype(np.float16)
 
-    name = _session.get_inputs()[0].name
-    logits = _session.run(None, {name: x})[0]  # [1, 1, H, W]
-    mask = 1.0 / (1.0 + np.exp(-logits[0, 0]))
-    ys, xs = np.nonzero(mask > _MASK_THRESHOLD)
-    if len(xs) == 0:
-        return None
+    logits = _session.run(None, {inp.name: x})[0]  # [1, 1, H, W]
+    mask = 1.0 / (1.0 + np.exp(-logits[0, 0].astype(np.float32)))
+    binary = (mask > _MASK_THRESHOLD).astype(np.uint8)
     mh, mw = mask.shape
-    if len(xs) / (mh * mw) < _MIN_AREA:
+    if int(binary.sum()) / (mh * mw) < _MIN_AREA:
         return None
+
+    # LARGEST connected component, not all masked pixels: stray activations
+    # (a window, a background guest) otherwise stretch the box across the
+    # frame and the thirds/headroom flags judge the wrong subject. Measured
+    # on real frames: identical boxes when the mask is clean, dramatically
+    # better when it isn't.
+    n, _labels, stats, _ = cv2.connectedComponentsWithStats(binary)
+    if n <= 1:
+        return None
+    i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    x0, y0, bw, bh = (int(stats[i, k]) for k in range(4))
 
     # Top-left normalized bbox in mask space == image space (both resized
     # from the full frame), then flipped to Vision convention.
-    x0, x1 = xs.min() / mw, (xs.max() + 1) / mw
-    y0, y1 = ys.min() / mh, (ys.max() + 1) / mh
-    return clamp_bbox(bbox_norm_to_vision(x0, y0, x1 - x0, y1 - y0))
+    return clamp_bbox(bbox_norm_to_vision(
+        x0 / mw, y0 / mh, bw / mw, bh / mh))

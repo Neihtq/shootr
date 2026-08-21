@@ -302,8 +302,14 @@ swap in via `SHOOTR_HELPER`). Adoption remains a post-A/B user decision:
 - ~~First gate run~~ (60 real CR3s, `docs/benchmarks/2026-08-20-analyzer-ab-60.md`):
   sharpness ρ 0.812 · faces 77 vs 56 (recall edge, unverified) · blendshapes
   discriminate where EAR saturates · grouping stable untuned (15 vs 14 groups)
-  · **python 14.4 h/10k = OVER the overnight bar — optimize before adoption**
-  (batch inference, fp16, skip BiRefNet 1024² at 0.5 scale)
+  · python 14.4 h/10k = over the overnight bar
+- ~~Throughput optimization~~ (2026-08-21): BiRefNet 512²-fp16 official variant
+  (saliency 5.0 s → 1.1 s; was 70% of the budget) + largest-CC bbox (also fixes
+  stray-activation boxes) + cached model_rgb → **median 2.12 s, 5.9 h/10k,
+  WITHIN the overnight bar**, identical accuracy numbers
+  (`docs/benchmarks/2026-08-21-analyzer-ab-60-optimized.md`). Remaining
+  adoption items: spot-check face recall (77 vs 56), re-measure grouping
+  thresholds on the full shoot, ARW/RAF samples
 - Component-wise adoption after A/B + labelled frames; single `engine_version`
   cutover (`py-0.1.0+<registry-hash>`); eat the re-analysis while small
 - AdaFace IR-101 still unpinned (no official ONNX artifact) — ArcFace R50

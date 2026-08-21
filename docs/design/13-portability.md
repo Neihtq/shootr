@@ -29,11 +29,17 @@
 > - Embedding neighbor Jaccard **0.580**; grouping on untuned thresholds
 >   14 vs 15 groups, same singleton count — surprisingly stable, but
 >   thresholds still need re-measuring on the full shoot before adoption.
-> - Throughput, M4, CPU EP: swift median 1.41 s → 3.9 h/10k; **python median
->   5.19 s → 14.4 h/10k — OVER the overnight bar.** Known headroom: batch-32
->   embedding/saliency inference, fp16 weights, skipping BiRefNet's 1024²
->   pass at 0.5 scale, larger SHOOTR_BATCH_SIZE. Optimization is required
->   before adoption, not optional.
+> - Throughput, M4, CPU EP: swift median 1.41 s → 3.9 h/10k; python was
+>   14.4 h/10k on the first run — **optimized 2026-08-21 to median 2.12 s →
+>   5.9 h/10k, WITHIN the overnight bar** at identical accuracy numbers
+>   (`docs/benchmarks/2026-08-21-analyzer-ab-60-optimized.md`). What did it:
+>   BiRefNet 512²-fp16 official variant replaces the 1024² full model
+>   (1.07 s vs 5.03 s — saliency was 70% of the budget; the engine consumes
+>   only a coarse bbox, and boxes match on real frames), largest-connected-
+>   component bbox instead of all-mask-pixels (also *fixes* stray-activation
+>   boxes stretching across the frame), and `model_rgb()` cached per photo
+>   (was recomputed 3×). Remaining gap to Swift is decode+faces dominated;
+>   acceptable per §1.5.
 
 Decision (2026-08-20): Shootr will eventually run on Windows and Linux. That converts
 the measurement stack from "Apple frameworks, with swaps where they're weak" to
