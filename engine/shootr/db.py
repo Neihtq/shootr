@@ -184,7 +184,15 @@ CREATE TABLE job_item (
 CREATE INDEX job_item_pending ON job_item(job_id, state);
 """
 
-MIGRATIONS: list[str] = [_MIGRATION_1]
+# Volume identity (design 02 §Discover): a library is (volume UUID,
+# path-relative-to-mount), so an external drive remounted at a different
+# path resolves to the SAME library row. UUID alone is not enough — two
+# folders on one drive are two libraries.
+_MIGRATION_2 = """
+ALTER TABLE library ADD COLUMN volume_rel_path TEXT;
+"""
+
+MIGRATIONS: list[str] = [_MIGRATION_1, _MIGRATION_2]
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:

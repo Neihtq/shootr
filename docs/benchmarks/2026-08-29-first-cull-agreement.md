@@ -119,3 +119,17 @@ picks at 961 (the shot-group count) vs the user's 559 keeps — a 12.6% keep
 rate is structurally unreachable on this grouping, and with ~chance ordering,
 tightening keep_n trades keeper recall 1:1. Left as is; revisit when an
 expression metric gives ordering real teeth.
+
+## Addendum 3 (2026-08-30): expression measured — weak positive, not shipped
+
+Full 52-blendshape vectors probed for all 6,164 matched faces
+(`expression_probe.py`, 18 min; raw vectors
+`2026-08-30-expression-probe.jsonl.gz`). Within shot groups, holdout:
+primary-face smile top-1 34.6% vs technical baseline 29.2%; best blend
+(tech + 0.3·smile) pairwise 55.0% vs 53.2%. Gains ≈1.6σ at 185 holdout
+groups — real-looking but unshippable on one shoot. Duchenne, jawOpen,
+browInnerUp, burst-relative smile: all ≤ baseline or chance. Conclusion
+recorded in design 04 §7: within-group choice among technically-equal
+frames is substantially under-determined at frame level; keep_n breadth +
+alt tier + compare UI are the product answer. Revisit with multi-shoot
+history.

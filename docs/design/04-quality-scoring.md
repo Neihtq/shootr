@@ -279,8 +279,14 @@ regularized fit 53.2% — so **the priors stay** (same bar as §08.7: a fit that
 beat the baseline doesn't ship). Cheap non-score signals also fail (earlier-in-burst
 54%, face count/size ~50%). The limiting factor is not weighting but *measurement*:
 within a burst, technical quality barely varies and the user's choice is expression and
-gesture — which nothing in §2 measures. The path to within-group agreement is an
-expression/peak-moment metric (MediaPipe's landmarker already emits smile/brow
-blendshapes in the analyzer we run — a near-free candidate), validated per §2.2's
-labelling discipline before it drives culling. Until then, within-group `keep_n`
-breadth is the honest mitigation, not tighter ordering.
+gesture — which nothing in §2 measures. **The expression candidate was then measured
+too** (2026-08-30, `engine/tools/expression_probe.py`: full 52-blendshape vectors on
+all 6,164 matched faces): primary-face smile is a weak positive — top-of-group hit
+34.6% vs the technical baseline's 29.2%, best tech+smile blend 55.0% pairwise vs 53.2%
+— but at 185 holdout groups those gains are ~1.6σ. Not shipped. The working conclusion:
+within-group choice among technically-equal frames is substantially **under-determined
+at frame level** — the ceiling may be intrinsic, not a missing feature. The product
+answer is what already exists: `keep_n` breadth, the alt tier, and a fast compare UI —
+the engine's job within a group is dedup and disaster-avoidance, not mind-reading.
+Revisit only with multi-shoot history (more groups → the 1.6σ question resolves
+itself) or a genuinely new signal class.
