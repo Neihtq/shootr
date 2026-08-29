@@ -357,3 +357,68 @@ class TestShootProposals:
         propose_shoots(conn, 1)
         n = conn.execute("SELECT COUNT(*) FROM shoot").fetchone()[0]
         assert n == 0  # user confirms; ingest never finalizes (design 02 §4)
+
+
+class TestLibraryVolumeIdentity:
+    """Design 02: (volume UUID, relative path) is the durable identity;
+    root_path is just where the volume is mounted today."""
+
+    def test_remounted_drive_resolves_to_same_library(self, tmp_path):
+        from pathlib import Path
+
+        from shootr.db import connect
+        from shootr.ingest import create_library, resolve_library
+
+        c = connect(tmp_path / "app.db")
+        ident = lambda root: ("UUID-1", "photos/wedding")  # noqa: E731
+        lib = create_library(c, Path("/Volumes/Drive/photos/wedding"),
+                             identity=ident)
+        # Same folder, drive remounted with a suffix.
+        got = resolve_library(c, Path("/Volumes/Drive 1/photos/wedding"),
+                              identity=ident)
+        assert got == lib
+        row = c.execute("SELECT root_path FROM library WHERE id=?",
+                        (lib,)).fetchone()
+        assert row["root_path"] == "/Volumes/Drive 1/photos/wedding"
+
+    def test_two_folders_one_drive_are_two_libraries(self, tmp_path):
+        from pathlib import Path
+
+        from shootr.db import connect
+        from shootr.ingest import create_library, resolve_library
+
+        c = connect(tmp_path / "app.db")
+        a = create_library(c, Path("/V/d/a"),
+                           identity=lambda r: ("UUID-1", "d/a"))
+        assert resolve_library(
+            c, Path("/V/d/b"), identity=lambda r: ("UUID-1", "d/b")) is None
+        assert a is not None
+
+    def test_no_uuid_degrades_to_path_matching(self, tmp_path):
+        from pathlib import Path
+
+        from shootr.db import connect
+        from shootr.ingest import create_library, resolve_library
+
+        c = connect(tmp_path / "app.db")
+        none = lambda r: (None, None)  # noqa: E731
+        lib = create_library(c, Path("/lib"), identity=none)
+        assert resolve_library(c, Path("/lib"), identity=none) == lib
+        assert resolve_library(c, Path("/other"), identity=none) is None
+
+    def test_legacy_row_backfills_identity_on_resolve(self, tmp_path):
+        from pathlib import Path
+
+        from shootr.db import connect
+        from shootr.ingest import resolve_library
+
+        c = connect(tmp_path / "app.db")
+        with c:
+            c.execute("INSERT INTO library (root_path, created_at) "
+                      "VALUES ('/old', 'now')")
+        lib = resolve_library(c, Path("/old"),
+                              identity=lambda r: ("UUID-9", "old"))
+        row = c.execute("SELECT volume_uuid, volume_rel_path FROM library "
+                        "WHERE id=?", (lib,)).fetchone()
+        assert (row["volume_uuid"], row["volume_rel_path"]) == \
+            ("UUID-9", "old")

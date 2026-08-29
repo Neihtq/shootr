@@ -418,6 +418,64 @@ class ShootProposal:
     directories: tuple[str, ...]
 
 
+# ---------------------------------------------------------------------------
+# Library identity (design 02 §Discover): external drives remount at
+# different paths, so (volume UUID, path-relative-to-mount) is the durable
+# identity and root_path is just where the volume happens to be today.
+
+
+def resolve_library(conn: sqlite3.Connection, root: Path,
+                    identity=None) -> int | None:
+    """Find the library row for `root`, healing a remounted drive.
+
+    Exact root_path match wins (and backfills identity on rows created
+    before volume tracking). Otherwise a (volume_uuid, volume_rel_path)
+    match means the same folder on the same drive at a new mount point:
+    update root_path in place — same library, new address.
+    """
+    from .volumes import volume_identity
+    identity = identity or volume_identity
+
+    row = conn.execute("SELECT id, volume_uuid FROM library "
+                       "WHERE root_path = ?", (str(root),)).fetchone()
+    if row:
+        if row["volume_uuid"] is None:
+            uuid, rel = identity(root)
+            if uuid:
+                with conn:
+                    conn.execute(
+                        "UPDATE library SET volume_uuid = ?, "
+                        "volume_rel_path = ? WHERE id = ?",
+                        (uuid, rel, row["id"]))
+        return row["id"]
+
+    uuid, rel = identity(root)
+    if uuid and rel is not None:
+        row = conn.execute(
+            "SELECT id FROM library WHERE volume_uuid = ? "
+            "AND volume_rel_path = ?", (uuid, rel)).fetchone()
+        if row:
+            log.info("library %d remounted: root_path -> %s",
+                     row["id"], root)
+            with conn:
+                conn.execute("UPDATE library SET root_path = ? "
+                             "WHERE id = ?", (str(root), row["id"]))
+            return row["id"]
+    return None
+
+
+def create_library(conn: sqlite3.Connection, root: Path,
+                   identity=None) -> int:
+    from .volumes import volume_identity
+    identity = identity or volume_identity
+    uuid, rel = identity(root)
+    with conn:
+        return conn.execute(
+            "INSERT INTO library (root_path, volume_uuid, volume_rel_path, "
+            "created_at) VALUES (?, ?, ?, datetime('now'))",
+            (str(root), uuid, rel)).lastrowid
+
+
 def propose_shoots(conn: sqlite3.Connection, library_id: int) -> list[ShootProposal]:
     """One proposal per folder — the folder IS the shoot.
 

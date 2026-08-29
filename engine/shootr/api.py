@@ -23,7 +23,9 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import db, helper, jobs, pipeline, xmp
-from .ingest import backfill_metadata, propose_shoots, scan
+from .ingest import (backfill_metadata, create_library as
+                     ingest_create_library, propose_shoots, resolve_library,
+                     scan)
 from .runner import JobRunner
 
 
@@ -130,17 +132,11 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
         try:
             # Re-adding a known path = rescan, never a duplicate library.
             # Scans are idempotent (fast-path filter), so this is cheap.
-            existing = c.execute(
-                "SELECT id FROM library WHERE root_path = ?",
-                (str(root),)).fetchone()
-            if existing:
-                lib_id = existing["id"]
-            else:
-                with c:
-                    cur = c.execute(
-                        "INSERT INTO library (root_path, created_at) "
-                        "VALUES (?, datetime('now'))", (str(root),))
-                    lib_id = cur.lastrowid
+            # resolve_library also heals a drive remounted at a new path:
+            # same (volume UUID, relative path) = same library (design 02).
+            lib_id = resolve_library(c, root)
+            if lib_id is None:
+                lib_id = ingest_create_library(c, root)
             # The Swift helper prober fills captured_at etc. — without it,
             # shoot proposals would have no capture times. `batch_prober`
             # is the one that matters for throughput: per-file spawning

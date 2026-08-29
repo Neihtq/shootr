@@ -44,8 +44,11 @@ outcome and can be built now.
   multi-profile scores)~~
 
 ### Ingest (`02`)
-- ~~Directory walker (`os.scandir`, extension allowlist, skip-list)~~ — volume UUID
-  detection (`diskutil`) still to do
+- ~~Directory walker (`os.scandir`, extension allowlist, skip-list)~~
+- ~~Volume UUID detection~~ — `shootr.volumes` + migration 2 (2026-08-30): library
+  identity is (volume UUID, path-relative-to-mount); a remounted drive heals
+  `root_path` in place, legacy rows backfill on resolve, non-macOS degrades to
+  path matching (NTFS/ext4 semantics ride design 13)
 - ~~Fast-path filter (`rel_path`+`mtime`+`size` → skip unchanged)~~
 - ~~Content identity: `blake3(size ‖ first 64KB ‖ last 64KB)` with collision
   escalation to full hash + loud logging, wired into scan~~
