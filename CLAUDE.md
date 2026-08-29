@@ -4,8 +4,10 @@ Offline photography culling + edit-assistance app for macOS. Scores photos on te
 quality, groups them, proposes a cull selection, pushes selects to Lightroom Classic,
 learns the user's editing style, and writes predicted develop settings back. All on-device.
 
-**Current state: design complete, zero code written.** Do not assume any implementation
-exists. If asked to build, start from the design docs and the benchmark gate below.
+**Current state: M1 built end-to-end and M4 native client substantially done** (see
+`PLAN.md` for the live item-by-item status). M2 calibration has its ground-truth shoot
+and a first agreement measurement (`docs/benchmarks/2026-08-29-first-cull-agreement.md`).
+The design docs remain the source of truth for behavior; update them when code diverges.
 
 ---
 
@@ -93,7 +95,9 @@ External drives remount at different paths.
 - **Python 3.14.6** at `/opt/homebrew/bin/python3.14`; wheels available for mediapipe,
   onnxruntime, torch, scikit-learn. Node v24.18.0. SQLite 3.53.3 (`mode=ro` and
   `immutable=1` both work).
-- **No photos, no LrC catalog, no Adobe apps on this Mac.** The library is external.
+- **Photos and a live LrC catalog now exist on this Mac** (since 2026-08): shoots under
+  `~/Pictures/`, catalog at `~/Pictures/Lightroom/Lightroom Catalog.lrcat` (DB version
+  1504001). The rule-1 protocol applies: copy, open `immutable=1`, never touch the live file.
 
 ---
 

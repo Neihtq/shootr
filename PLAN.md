@@ -22,8 +22,12 @@ update the owning doc too (CLAUDE.md rule).
     (FR 4.3%/FA 16.7% at its best cut). Per-source calibrated curves shipped
     (`EYES_OPEN_CURVES`, 04 §2.2). Provisional at n=6 closed — grow the labelled
     set opportunistically; refit in M2
-- Obtain sample folder + LrC catalog copy from user (`SPEC §11`)
-- Confirm LrC version and whether "Automatically write changes into XMP" is enabled
+- ~~Obtain sample folder + LrC catalog copy from user (`SPEC §11`)~~ — real edited
+  wedding landed 2026-08-28 (`~/Pictures/Peter and Thuan`, 4,447 CR3/CR2, 559-keeper
+  cull recovered from the catalog on this Mac); ARW/RAF still pending (user: wait)
+- Confirm whether "Automatically write changes into XMP" is enabled — LrC DB version
+  is 1504001 (read from the catalog); sidecars in the shoot folder are NOT Lightroom's
+  (third-party ratings/labels — never treat as user intent)
 
 The Swift helper's `probe`/`analyze` commands (below) are useful regardless of the gate's
 outcome and can be built now.
@@ -211,10 +215,22 @@ outcome and can be built now.
 
 ## M2 — Calibration
 
+**First agreement measurement done 2026-08-29** on the real wedding (4,448 frames,
+1.91 h, 0 failures — first CR2 run, clean): moment coverage 98.6% (only 8/559
+keepers in pick-less groups) but pick recall 32% — within-group ordering is the
+gap. 26% of false-rejects are blink false-positives from the live path still
+running EAR (`eye_source='ear_landmarks'`; blendshapes exist only in the Python
+analyzer) → **wiring blendshapes into the live eye path is the highest-leverage
+pre-fitting fix**. Full numbers: `docs/benchmarks/2026-08-29-first-cull-agreement.md`.
+
 - Catalog copy reader: copy `.lrcat`+`-wal`+`-shm`, open `mode=ro`, version probe,
-  validate-before-query, degrade to sidecar-only (`07 §2`)
+  validate-before-query, degrade to sidecar-only (`07 §2`) — done manually
+  2026-08-29 (immutable=1; note: WAL catalogs fail plain `mode=ro` without shm
+  access — reader must use `immutable=1` on a quiesced copy); engine code still to write
 - Extract picks/ratings/labels/develop into `lr_history`; match by
-  filename+time+size; report coverage and unmatched counts
+  filename+time+size; report coverage and unmatched counts — 559 keeper rows
+  loaded for the wedding shoot (filename match, 100% coverage); develop extraction
+  + generalized matcher still to write
 - Fit metric→outcome weights per profile, regularized toward hand-tuned priors (`04 §7`)
 - Refit piecewise curve breakpoints (currently doc guesses)
 - Headline metrics: agreement rate per profile; false-reject rate on user-promoted
