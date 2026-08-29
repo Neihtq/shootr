@@ -18,7 +18,7 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import db, jobs, pipeline
+from . import db, eye_refiner, jobs, pipeline
 from .analyze_runner import run_analyze_job
 
 
@@ -80,6 +80,14 @@ class JobRunner:
                             (req.job_id,)).fetchone()
                         if shoot and shoot["shoot_id"]:
                             sid = shoot["shoot_id"]
+                            # Blendshape eye refinement before scoring:
+                            # EAR values abstain (04 §2.2), so without this
+                            # pass eyes_open is null on every fresh face.
+                            # Idempotent + per-photo tolerant; skipped
+                            # (with EAR abstaining) if the canonical stack
+                            # isn't installed.
+                            eye_refiner.refine_shoot(conn, sid,
+                                                     req.library_root)
                             pipeline.group_shoot(conn, sid)
                             pipeline.score_shoot(conn, sid)
                             pipeline.create_selection(conn, sid)

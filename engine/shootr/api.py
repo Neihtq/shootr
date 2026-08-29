@@ -559,6 +559,10 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
             elif not ids:
                 # Everything already analyzed: run the cheap derived steps
                 # inline so "Analyze & cull" is one action either way.
+                # Eye refinement (runner finalize) is deliberately NOT run
+                # here — it decodes photos and takes minutes; unrefined EAR
+                # faces just abstain on eyes_open (04 §2.2), degraded not
+                # wrong.
                 jobs.finish_job(c, job_id)
                 pipeline.group_shoot(c, shoot_id)
                 pipeline.score_shoot(c, shoot_id)
