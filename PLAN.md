@@ -314,8 +314,10 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
 - ~~Shoot settings sheet: rename + genre switch (instant rescore)~~
 - ~~Trackpad pinch to zoom on the loupe~~
 - ~~Loupe prefetch (±2)~~
-- GPU throttling while an analyze job runs — deferred until the worker pool
-  exists (single-worker M1 can't contend with itself)
+- GPU throttling while an analyze job runs — pool exists now (default 4 workers,
+  deliberately not 8: headroom for interactive use is the current mitigation).
+  Build real throttling only if browsing-during-analysis measurably stutters;
+  `SHOOTR_WORKERS=2` is the user-side dial in the meantime
 - Quick Look / drag-out integration — post-M1 nicety
 
 ## M5 — Optional LrC Lua plugin
