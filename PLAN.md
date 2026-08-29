@@ -158,12 +158,16 @@ outcome and can be built now.
   attempts≥3 permanent fail, job marked failed if any item failed~~
 - ~~Cancellation: keep completed work, resume later (§6)~~
 - ~~Measurement persistence: analysis + face + embedding rows from helper JSONL~~
-- asyncio coordinator, N helper subprocesses, 2N-batch backpressure — M1 runs
-  batches synchronously; parallel pool is a drop-in upgrade (checkpoint contract
-  unchanged), size it from the benchmark
+- ~~N-worker helper pool~~ — threads-over-subprocesses in `run_analyze_job`
+  (2026-08-30), checkpoint contract unchanged, one worker's crash/stall banks the
+  others' work and requeues only the unreported. Sized on real CR3s (M5 Pro):
+  1.47 s/photo → 0.47 at the default 4 workers (10k ≈ 1.3 h); 8 workers reach
+  0.28 s/photo at 65% efficiency. `SHOOTR_WORKERS` overrides
 - Progress: rolling 60 s rate + ETA + SSE stream — lands with the API (`10`);
   counts/failed already queryable via `jobs.progress`
-- Helper hang timeout (30 s/photo) — needs the subprocess pool
+- ~~Helper hang timeout~~ — already shipped as the helper-layer stall watchdog
+  (`SHOOTR_STALL_TIMEOUT`, default 120 s per silent batch, SIGKILL escalation);
+  per-worker under the pool, verified by the stall-gate test
 
 ### API (`10`)
 - ~~FastAPI app factory; `main()` binds `127.0.0.1` only~~

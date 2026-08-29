@@ -93,13 +93,13 @@ def test_crash_mid_batch_banks_partial_results(conn):
     job = create_job(conn, 1, "analyze", [1, 2, 3, 4, 5, 6])
     with pytest.raises(RuntimeError):
         run_analyze_job(conn, job, ROOT, analyzer=crashy,
-                        volume_check=lambda: True)
+                        volume_check=lambda: True, workers=1)
     # 3 banked, 3 requeued.
     assert progress(conn, job).completed == 3
     assert len(pending_items(conn, job)) == 3
     # Resume = re-call. No special path.
     p = run_analyze_job(conn, job, ROOT, analyzer=crashy,
-                        volume_check=lambda: True)
+                        volume_check=lambda: True, workers=1)
     assert p.state == "done" and p.completed == 6
 
 
@@ -144,3 +144,52 @@ def test_volume_offline_pauses_before_batch(conn):
     p = run_analyze_job(conn, job, ROOT, analyzer=happy_analyzer,
                         volume_check=lambda: True)
     assert p.state == "done" and p.completed == 6
+
+
+class TestWorkerPool:
+    """workers>1: same checkpoint contract, N analyzer subprocesses."""
+
+    def test_slices_are_disjoint_and_complete(self, conn):
+        batches = []
+
+        def tracking(files, scale):
+            batches.append([str(f) for f in files])
+            for f in files:
+                yield ok_result(f)
+
+        job = create_job(conn, 1, "analyze", [1, 2, 3, 4, 5, 6])
+        p = run_analyze_job(conn, job, ROOT, analyzer=tracking,
+                            volume_check=lambda: True, workers=3)
+        assert p.state == "done" and p.completed == 6
+        flat = [f for b in batches for f in b]
+        assert len(batches) == 3 and sorted(flat) == sorted(set(flat))
+        assert conn.execute("SELECT COUNT(*) FROM analysis").fetchone()[0] == 6
+
+    def test_one_worker_crash_banks_others_and_raises(self, conn):
+        def flaky(files, scale):
+            for f in files:
+                if "IMG_2" in str(f):  # worker holding photo 2 dies mid-run
+                    raise RuntimeError("helper crashed")
+                yield ok_result(f)
+
+        job = create_job(conn, 1, "analyze", [1, 2, 3, 4, 5, 6])
+        with pytest.raises(RuntimeError):
+            run_analyze_job(conn, job, ROOT, analyzer=flaky,
+                            volume_check=lambda: True, workers=3)
+        # Everything the surviving workers reported is banked; the crashed
+        # slice is back to pending, nothing lost.
+        states = dict(conn.execute(
+            "SELECT state, COUNT(*) FROM job_item GROUP BY state"))
+        assert states.get("done", 0) >= 4
+        assert states.get("pending", 0) >= 1
+        # Resume with a healthy analyzer finishes the job.
+        p = run_analyze_job(conn, job, ROOT, analyzer=happy_analyzer,
+                            volume_check=lambda: True, workers=3)
+        assert p.state == "done" and p.completed == 6
+
+    def test_workers_env_default_is_single(self, conn, monkeypatch):
+        monkeypatch.delenv("SHOOTR_WORKERS", raising=False)
+        job = create_job(conn, 1, "analyze", [1, 2])
+        p = run_analyze_job(conn, job, ROOT, analyzer=happy_analyzer,
+                            volume_check=lambda: True)
+        assert p.state == "done" and p.completed == 2

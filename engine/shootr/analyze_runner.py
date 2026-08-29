@@ -1,10 +1,18 @@
 """Analyze-job runner: drains a job's pending items through the Swift helper
 and persists measurements (design 09 §3).
 
-M1 shape: synchronous batches with per-photo incremental consumption. The
-helper flushes JSONL per photo, so a batch killed at photo 40 of 64 still
-banks 40 results. The asyncio N-worker pool is a drop-in upgrade later —
-the checkpointing contract (this module + jobs.py) doesn't change.
+Per-photo incremental consumption: the helper flushes JSONL per photo, so
+a batch killed at photo 40 of 64 still banks 40 results.
+
+Concurrency (design 09 §5): `workers` N > 1 runs N helper subprocesses,
+each on its own slice of the claimed batch, feeding one queue. Only the
+coordinator thread touches SQLite — workers produce, it consumes — so the
+checkpointing contract is byte-identical to the single-worker path. One
+worker crashing (or stalling: the helper layer's watchdog raises
+HelperStalled) requeues only ITS unreported slice; the round continues.
+A round that completes nothing while a worker failed raises, preserving
+the "crash marks the job errored, resume retries" semantics — otherwise a
+persistent crasher would spin forever.
 """
 
 from __future__ import annotations
@@ -12,7 +20,9 @@ from __future__ import annotations
 import base64
 import json
 import os
+import queue
 import sqlite3
+import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -27,6 +37,36 @@ BATCH_SIZE = int(os.environ.get("SHOOTR_BATCH_SIZE", 48))
 Analyzer = Callable[[list[Path], float], Iterator[dict]]
 
 
+def _pooled(analyzer: Analyzer, slices: list[list[Path]], scale: float
+            ) -> Iterator[tuple[str, object, int]]:
+    """Merge N analyzer generators into one stream of events:
+    ("result", dict, slot) · ("error", exception, slot) · ("done", _, slot).
+    """
+    q: queue.Queue = queue.Queue(maxsize=64)  # backpressure on producers
+
+    def work(slot: int, files: list[Path]) -> None:
+        try:
+            for result in analyzer(files, scale):
+                q.put(("result", result, slot))
+        except Exception as e:  # noqa: BLE001 — reported, decided upstream
+            q.put(("error", e, slot))
+        else:
+            q.put(("done", None, slot))
+
+    threads = [threading.Thread(target=work, args=(i, files), daemon=True)
+               for i, files in enumerate(slices)]
+    for t in threads:
+        t.start()
+    live = len(threads)
+    while live:
+        kind, payload, slot = q.get()
+        if kind in ("done", "error"):
+            live -= 1
+        yield kind, payload, slot
+    for t in threads:
+        t.join()
+
+
 def run_analyze_job(
     conn: sqlite3.Connection,
     job_id: int,
@@ -35,6 +75,7 @@ def run_analyze_job(
     analyzer: Analyzer | None = None,
     volume_check: Callable[[], bool] | None = None,
     finalize: Callable[[], None] | None = None,
+    workers: int | None = None,
 ) -> jobs.Progress:
     """Drain the job. Safe to call repeatedly: resume = re-call.
 
@@ -44,9 +85,20 @@ def run_analyze_job(
     this shoot yet", and between analysis ending and the selection
     existing there is nothing to review. Marking done first would open
     that window.
+
+    `workers` > 1 fans each claimed round out over N helper subprocesses
+    (default from SHOOTR_WORKERS). Error semantics are unchanged from the
+    single-worker path: a worker crash/stall banks everything already
+    reported (by ANY worker), requeues the unreported, and raises after
+    the surviving workers drain — resume continues from the checkpoint.
     """
     analyzer = analyzer or helper.analyze_batch
     volume_check = volume_check or library_root.is_dir
+    # Default 4, sized on real CR3s (M5 Pro, 2026-08-30): 1.47 s/photo
+    # single → 0.47 at 4 (3.1×, 10k ≈ 1.3 h); 8 still gains (0.28) but at
+    # 65% efficiency and the machine should stay usable during a run.
+    workers = max(1, workers if workers is not None
+                  else int(os.environ.get("SHOOTR_WORKERS", "4")))
 
     while True:
         # Volume check before each batch (design 09 §4): offline pauses the
@@ -55,7 +107,8 @@ def run_analyze_job(
             jobs.pause_job(conn, job_id, "volume_offline")
             return jobs.progress(conn, job_id)
 
-        batch_ids = jobs.pending_items(conn, job_id, limit=BATCH_SIZE)
+        batch_ids = jobs.pending_items(conn, job_id,
+                                       limit=BATCH_SIZE * workers)
         if not batch_ids:
             break
 
@@ -72,10 +125,21 @@ def run_analyze_job(
 
         done_buffer: list[int] = []
         seen: set[int] = set()
+        first_error: BaseException | None = None
         try:
             files = [library_root / photos[pid] for pid in batch_ids
                      if pid in photos]
-            for result in analyzer(files, scale):
+            slices = [files[i::workers] for i in range(workers)]
+            slices = [s for s in slices if s]
+            for kind, payload, _slot in _pooled(analyzer, slices, scale):
+                if kind == "error":
+                    # Keep consuming: the other workers' results are real
+                    # work — bank them before surfacing the failure.
+                    first_error = first_error or payload  # type: ignore
+                    continue
+                if kind == "done":
+                    continue
+                result: dict = payload  # type: ignore[assignment]
                 rel = str(Path(result["path"]).relative_to(library_root)) \
                     if result.get("path", "").startswith(str(library_root)) \
                     else result.get("path", "")
@@ -92,7 +156,8 @@ def run_analyze_job(
                     jobs.complete_items(conn, job_id, done_buffer)
                     done_buffer = []
         except Exception:
-            # Helper crash/hang: bank what we have, requeue the rest.
+            # Consumer-side crash (persist bug, interrupt): bank what we
+            # have, requeue the rest.
             if done_buffer:
                 jobs.complete_items(conn, job_id, done_buffer)
             jobs.requeue_batch(conn, job_id,
@@ -101,6 +166,12 @@ def run_analyze_job(
 
         if done_buffer:
             jobs.complete_items(conn, job_id, done_buffer)
+        if first_error is not None:
+            # Helper crash/stall in ≥1 worker: everything reported above is
+            # banked; the unreported items go back to pending.
+            jobs.requeue_batch(conn, job_id,
+                               [p for p in batch_ids if p not in seen])
+            raise first_error
         # Items the helper never reported (crashed mid-batch without output):
         unreported = [p for p in batch_ids if p not in seen and p in photos]
         if unreported:

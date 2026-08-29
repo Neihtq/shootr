@@ -210,6 +210,9 @@ class TestRunnerWiring:
         """End-to-end version of the lock hazard: the helper hangs, the
         watchdog kills it, and the shoot must NOT stay busy — otherwise the
         card the gate disabled can never be opened or retried again."""
+        # Single worker: the assertions count exactly one banked result
+        # before the stall; with a pool the other slices would also bank.
+        monkeypatch.setenv("SHOOTR_WORKERS", "1")
         client, db_path, lib = env
 
         def stalling_analyze(files, scale=0.5):
