@@ -229,14 +229,15 @@ analyzer) → fixed same day by the blendshape backfill (68 → 30 blink false-r
 headline barely moved, confirming within-group ordering as the fitting target).
 Full numbers + addendum: `docs/benchmarks/2026-08-29-first-cull-agreement.md`.
 
-- Catalog copy reader: copy `.lrcat`+`-wal`+`-shm`, open `mode=ro`, version probe,
-  validate-before-query, degrade to sidecar-only (`07 §2`) — done manually
-  2026-08-29 (immutable=1; note: WAL catalogs fail plain `mode=ro` without shm
-  access — reader must use `immutable=1` on a quiesced copy); engine code still to write
-- Extract picks/ratings/labels/develop into `lr_history`; match by
-  filename+time+size; report coverage and unmatched counts — 559 keeper rows
-  loaded for the wedding shoot (filename match, 100% coverage); develop extraction
-  + generalized matcher still to write
+- ~~Catalog copy reader~~ — `shootr.lr_catalog` (2026-08-30): LrC-running refusal,
+  copy with `-wal`/`-shm`, `immutable=1` on quiesced copies / recover-then-`query_only`
+  on live-WAL copies, version probe, validate-before-query → `CatalogInvalid` degrades
+  to sidecar-only. CLI: `engine/tools/import_lr_history.py`
+- ~~Extract picks/ratings/labels/develop into `lr_history`~~ — filename+time(+size
+  when the catalog has it) matcher with reported unmatched/ambiguous counts; develop
+  parsed from the Lua `text` (crs XMP fallback — 07 §2 preference inverted on real
+  data) into JSON. Real run: 560/560 matched, develop on all 560 (111 global params) —
+  M3's raw material is in the DB
 - ~~Fit metric→outcome weights per profile, regularized toward hand-tuned priors
   (`04 §7`)~~ — fit 2026-08-29 (`engine/tools/fit_weights.py`): within-group ordering
   is chance (priors 53.0% holdout pairwise, best fit 53.2%) → **priors retained**;

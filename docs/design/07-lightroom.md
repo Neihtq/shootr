@@ -75,9 +75,15 @@ Relevant tables (LrC 11–14 shape; **schema is undocumented and version-specifi
   silently dropping.
 
 Develop settings in `Adobe_imageDevelopSettings.text` are a serialized Lua table, not JSON.
-Parsing is a known unknown — the `xmp` blob in `Adobe_AdditionalMetadata` is often the more
-tractable source for the same values, since it uses documented `crs:` namespacing. Prefer
-the XMP blob; fall back to the Lua text.
+**Measured 2026-08-30 on a real LrC 15 catalog (DB version 1504001): the preference
+inverts.** The `Adobe_AdditionalMetadata.xmp` blob (4-byte length prefix + zlib) carried
+`crs:` develop values on 1 of 560 edited photos — LrC only serializes develop into it on
+explicit save-to-XMP — while the Lua `text` had every edit (111 global params each).
+Implemented (`shootr.lr_catalog`): parse the Lua table's depth-1 scalars (nested tables
+are masks/curves — local, out of style scope), fall back to `crs:` XMP attributes, store
+JSON in `lr_history.develop`. The WAL lesson from the same run: a quiesced copy opens
+with `immutable=1` (plain `mode=ro` fails without the `-shm`); a copy with a live `-wal`
+gets one writable open to recover, then `PRAGMA query_only`.
 
 ---
 
