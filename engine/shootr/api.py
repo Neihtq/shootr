@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import db, helper, jobs, pipeline, xmp
+from . import db, helper, jobs, pipeline, style, xmp
 from .ingest import (backfill_metadata, create_library as
                      ingest_create_library, propose_shoots, resolve_library,
                      scan)
@@ -66,6 +66,16 @@ class EntryPatch(BaseModel):
 
 class ExportIn(BaseModel):
     confirm_overwrite: bool = False
+
+
+class StylePredictIn(BaseModel):
+    family: int | None = None      # None → auto-suggest (08 §3)
+    photo_ids: list[int] | None = None  # None → latest selection's picks
+
+
+class StyleExportIn(BaseModel):
+    family: int
+    photo_ids: list[int]
 
 
 class SplitIn(BaseModel):
@@ -824,6 +834,145 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
             return {"photo_id": body.photo_id,
                     "group_id": body.to_group_id,
                     "source_deleted": left == 0}
+        finally:
+            c.close()
+
+    # -- style (design 08) ----------------------------------------------------
+
+    def _history_pv(samples) -> str:
+        """Predictions apply the history's process version (08 §6: refuse
+        cross-PV application; the history is single-PV in practice)."""
+        pvs = [s.process_version for s in samples if s.process_version]
+        return max(set(pvs), key=pvs.count) if pvs else "15.4"
+
+    def _style_history(c) -> list:
+        """All imported edit history — families span shoots by design;
+        looks are the user's, not a shoot's."""
+        samples = style.load_history(c)
+        if len(samples) < 10:
+            raise error(409, "insufficient_history",
+                        f"style needs edit history; have {len(samples)} "
+                        "edited photos with embeddings (import a catalog)",
+                        retryable=True)
+        style.cluster_families(samples)
+        return samples
+
+    @app.get("/api/style/families")
+    def style_families():
+        c = conn()
+        try:
+            samples = _style_history(c)
+            fams = sorted({s.family for s in samples})
+            return [{
+                "id": f,
+                "size": sum(1 for s in samples if s.family == f),
+                "traits": style.family_traits(samples, f),
+                # Sample photos double as the family's thumbnails via the
+                # existing thumbnail endpoint (08 §3).
+                "sample_photo_ids": [s.photo_id for s in samples
+                                     if s.family == f][:4],
+                "median": style.family_median(samples, f),
+            } for f in fams]
+        finally:
+            c.close()
+
+    def _shoot_embeddings(c, shoot_id, photo_ids):
+        import numpy as np
+        rows = c.execute(
+            f"SELECT e.photo_id, e.vec FROM embedding e "
+            f"JOIN photo p ON p.id = e.photo_id "
+            f"WHERE e.kind = 'scene' AND p.shoot_id = ? AND e.photo_id IN "
+            f"({','.join('?' * len(photo_ids))})",
+            (shoot_id, *photo_ids)).fetchall()
+        return {r["photo_id"]:
+                np.frombuffer(r["vec"], dtype=np.float32).astype(np.float64)
+                for r in rows}
+
+    @app.post("/api/shoots/{shoot_id}/style/predict")
+    def style_predict(shoot_id: int, body: StylePredictIn):
+        """Read-only preview: per-photo params + confidence + the neighbor
+        photos the blend came from — inspectable, never opaque (08 §4)."""
+        c = conn()
+        try:
+            samples = _style_history(c)
+            ids = body.photo_ids
+            if ids is None:
+                sel = c.execute(
+                    "SELECT id FROM selection WHERE shoot_id = ? "
+                    "ORDER BY id DESC LIMIT 1", (shoot_id,)).fetchone()
+                if not sel:
+                    raise error(404, "no_selection",
+                                "no selection to predict for; pass photo_ids")
+                ids = [r["photo_id"] for r in c.execute(
+                    "SELECT photo_id FROM selection_entry WHERE "
+                    "selection_id = ? AND state = 'pick'", (sel["id"],))]
+            embs = _shoot_embeddings(c, shoot_id, ids)
+            if not embs:
+                raise error(404, "not_analyzed",
+                            "photos have no embeddings; analyze first")
+            family = body.family
+            if family is None:
+                family = style.suggest_family(list(embs.values()), samples)
+            pv = _history_pv(samples)
+            out = []
+            for pid in ids:
+                if pid not in embs:
+                    out.append({"photo_id": pid, "abstained": True,
+                                "reason": "not_analyzed"})
+                    continue
+                pred = style.predict(embs[pid], samples, family)
+                out.append({
+                    "photo_id": pid, "abstained": pred.abstained,
+                    "reason": pred.reason,
+                    "confidence": round(pred.confidence, 3),
+                    "params": pred.params,
+                    "neighbor_photo_ids": pred.neighbor_ids,
+                })
+            return {"family": family, "process_version": pv,
+                    "predictions": out}
+        finally:
+            c.close()
+
+    @app.post("/api/shoots/{shoot_id}/style/export-develop")
+    def style_export_develop(shoot_id: int, body: StyleExportIn):
+        """Write predictions as crs: sidecar attributes. Abstentions write
+        nothing; a sidecar with existing develop settings is a conflict —
+        reported, skipped, never overwritten (no override exists, 08 §6)."""
+        c = conn()
+        try:
+            samples = _style_history(c)
+            embs = _shoot_embeddings(c, shoot_id, body.photo_ids)
+            pv = _history_pv(samples)
+            paths = {r["id"]: Path(r["root_path"]) / r["rel_path"]
+                     for r in c.execute(
+                         f"SELECT p.id, p.rel_path, l.root_path FROM photo p "
+                         f"JOIN library l ON l.id = p.library_id "
+                         f"WHERE p.shoot_id = ? AND p.id IN "
+                         f"({','.join('?' * len(body.photo_ids))})",
+                         (shoot_id, *body.photo_ids))}
+            written, abstained, conflicts = [], [], []
+            for pid in body.photo_ids:
+                if pid not in embs or pid not in paths:
+                    abstained.append({"photo_id": pid,
+                                      "reason": "not_analyzed"})
+                    continue
+                pred = style.predict(embs[pid], samples, body.family)
+                if pred.abstained:
+                    abstained.append({"photo_id": pid,
+                                      "reason": pred.reason})
+                    continue
+                target = xmp.sidecar_path_for(paths[pid])
+                try:
+                    xmp.write_develop(target, pred.params, pv,
+                                      app.state.backup_dir)
+                    written.append(pid)
+                except xmp.DevelopConflict:
+                    conflicts.append({"photo_id": pid,
+                                      "path": str(target)})
+            return {"written": written, "abstained": abstained,
+                    "conflicts": conflicts,
+                    "note": ("conflicting sidecars carry the user's own "
+                             "develop settings and were not touched")}
         finally:
             c.close()
 

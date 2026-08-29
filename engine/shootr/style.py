@@ -196,6 +196,21 @@ def family_median(samples: list[StyleSample], family: int) -> dict[str, float]:
             if not math.isnan(v)}
 
 
+def suggest_family(embeddings: list[np.ndarray],
+                   history: list[StyleSample]) -> int:
+    """Auto-suggestion (§3): the family whose members are most similar to
+    the shoot's photos on average. The user can always override."""
+    fams = sorted({s.family for s in history})
+    E = np.stack([e / (np.linalg.norm(e) or 1.0) for e in embeddings])
+    best, best_sim = fams[0], -np.inf
+    for f in fams:
+        F = np.stack([s.embedding for s in history if s.family == f])
+        sim = float((E @ F.T).mean())
+        if sim > best_sim:
+            best, best_sim = f, sim
+    return best
+
+
 # --- k-NN prediction (design 08 §4) ------------------------------------------
 
 

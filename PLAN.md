@@ -281,7 +281,11 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
 - ~~Evaluation~~ — `engine/tools/eval_style.py`; re-run per new shoot imported
 - ~~XMP `crs:` writer~~ — `xmp.write_develop` via the `07 §1` Rule-2 protocol;
   `ProcessVersion` stamped on every write
-- API endpoints + client UI (family picker, prediction preview, opt-outs) — not started
+- ~~API endpoints~~ — `/api/style/families` (traits + sample thumbnails + median),
+  `/predict` (read-only, neighbors named, auto-suggested family), `/export-develop`
+  (abstentions write nothing; user-edited sidecars = reported conflicts, no
+  override). Client UI (family picker, prediction preview, per-param opt-outs,
+  highlight-clip check) — not started, both clients
 - JPEG+RAW pair validation (trends/direction, not pixel equality) — needs exported pairs
 - Gradient-boosted trees only if k-NN measurably underperforms — not currently indicated
 - XMP `crs:` writer via the `07 §1` Rule-2 protocol; `ProcessVersion` discipline
