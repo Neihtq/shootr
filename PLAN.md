@@ -237,10 +237,19 @@ Full numbers + addendum: `docs/benchmarks/2026-08-29-first-cull-agreement.md`.
   filename+time+size; report coverage and unmatched counts — 559 keeper rows
   loaded for the wedding shoot (filename match, 100% coverage); develop extraction
   + generalized matcher still to write
-- Fit metric→outcome weights per profile, regularized toward hand-tuned priors (`04 §7`)
-- Refit piecewise curve breakpoints (currently doc guesses)
-- Headline metrics: agreement rate per profile; false-reject rate on user-promoted
-  frames tracked separately (asymmetric cost, `06 §7`)
+- ~~Fit metric→outcome weights per profile, regularized toward hand-tuned priors
+  (`04 §7`)~~ — fit 2026-08-29 (`engine/tools/fit_weights.py`): within-group ordering
+  is chance (priors 53.0% holdout pairwise, best fit 53.2%) → **priors retained**;
+  within-group agreement needs an expression/peak-moment *measurement*, not weights
+  (04 §7 records the numbers). Refit per new shoot as history grows
+- ~~Refit piecewise curve breakpoints (currently doc guesses)~~ — eyes_open refit on
+  the merged 285-face label set: blendshapes 0.4-boundary moved 0.62 → 0.50, EAR now
+  *abstains* (no usable separation; was 26% of keeper false-rejects). Other curves
+  still doc guesses
+- ~~Headline metrics: agreement rate per profile; false-reject rate on user-promoted
+  frames tracked separately (asymmetric cost, `06 §7`)~~ — first event-profile numbers
+  on the wedding: moment coverage 98.9%, pick recall 33%, false-reject 46.9%
+  (near-duplicate substitution dominates), blink-reason false-rejects 68 → 20
 - Online adjustment from `user_override` entries
 
 ## M3 — Style learning

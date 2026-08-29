@@ -82,20 +82,27 @@ enough that one shared curve measurably mis-scores: labelled-closed eyes sat at 
 under EAR but 0.33–0.59 under MediaPipe blendshapes. The shared curve's effective cut
 (raw 0.60 → score 0.4) false-rejected 21.7% of open eyes under EAR.
 
-Calibrated curves (`EYES_OPEN_CURVES` in scoring.py; score 0.4 = culling's "eyes closed"
-boundary, placed at each source's measured separation point):
+**Refit 2026-08-29** on the merged labelled set (285 faces: the 33-face round plus 252
+faces from a real wedding's blink-rejected keepers — `docs/benchmarks/
+2026-08-29-blink-labels-wedding/`). The larger set overturned the first round's EAR
+numbers: merged EAR opens have p50 = 0.32 with closed values spanning 0.0–1.0 — no
+usable cut exists (its best still false-rejects ~20% of open eyes at 44% false-accept).
+**EAR therefore abstains** (`ABSTAIN_EYE_SOURCES` in scoring.py): `eyes_open` is `null`
+for `ear_landmarks` faces per §5 — detector abstained, not genuinely bad. On the
+wedding this single decision was 26% of all keeper false-rejects.
 
-| source | separation (raw → score 0.4) | on labelled set |
+Calibrated curves (`EYES_OPEN_CURVES`; score 0.4 = culling's "eyes closed" boundary).
+Costs are asymmetric (§06.7) — and the wedding's truly-closed faces were on frames the
+user *kept*, so false-accept tolerance matches real culling:
+
+| source | separation (raw → score 0.4) | on merged labelled set |
 |---|---|---|
-| `ear_landmarks` | 0.42 | false-reject 4.3%, false-accept 16.7% |
-| `mediapipe_blendshapes` | 0.62 | false-reject 0%, false-accept 0% — clean gap 0.59→0.65 |
+| `mediapipe_blendshapes` | 0.50 | false-reject 2.2%, false-accept 78% — overlap is real (expressions) |
+| `ear_landmarks` | — | **abstains** (no separation; see above) |
 | unknown source | 0.60 (generic fallback curve) | uncalibrated |
 
-Blendshapes separated cleanly where EAR overlapped (EAR scored two labelled-closed faces
-0.40/0.41 — inside its open range). **Provisional: n=6 closed faces.** Both curves refit
-in M2 against catalog history (§7); the labelling tool makes growing the labelled set an
-hour of keystrokes, and every new eye source ships with its own labelling round before
-its scores drive culling.
+Every new eye source ships with its own labelling round before its scores drive
+culling; the labelling tool makes growing the set an hour of keystrokes.
 
 **Detector reliability remains a live risk** (§03.5). Because this metric is *dominant*
 for portrait/event, a bad detector actively discards good photos. Mitigations:
@@ -262,3 +269,18 @@ wild weights. Report **agreement rate with past decisions** as the headline qual
 Caveat to keep honest: historical picks are confounded by client requirements, delivery
 quotas, and duplicates already removed. It's noisy ground truth, not gospel — hence
 regularization and a visible agreement metric rather than blind fitting.
+
+**First fit, measured (2026-08-29,** `engine/tools/fit_weights.py`**, real wedding,
+559 keepers / 961 shot groups):** the split verdict the architecture predicted.
+*Between* groups the engine agrees strongly (98.9% of the user's keepers sat in groups
+the engine also picked from). *Within* a shot group, ordering by these six metrics is
+statistically chance: hand-tuned priors 53.0% holdout pairwise accuracy, best
+regularized fit 53.2% — so **the priors stay** (same bar as §08.7: a fit that doesn't
+beat the baseline doesn't ship). Cheap non-score signals also fail (earlier-in-burst
+54%, face count/size ~50%). The limiting factor is not weighting but *measurement*:
+within a burst, technical quality barely varies and the user's choice is expression and
+gesture — which nothing in §2 measures. The path to within-group agreement is an
+expression/peak-moment metric (MediaPipe's landmarker already emits smile/brow
+blendshapes in the analyzer we run — a near-free candidate), validated per §2.2's
+labelling discipline before it drives culling. Until then, within-group `keep_n`
+breadth is the honest mitigation, not tighter ordering.

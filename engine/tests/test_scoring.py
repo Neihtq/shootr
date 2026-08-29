@@ -79,27 +79,29 @@ class TestEyeSemantics:
         rec = score(m, "portrait")
         assert rec.components["eyes_open"]["value"] < 0.1
 
-    def test_eyes_open_curve_is_per_source(self):
-        """Calibrated on hand-labelled frames (2026-08-20): the detectors'
-        raw scales differ — a blendshapes 0.55 is a labelled-closed eye
-        while an EAR 0.55 is past EAR's separation point (0.42). One shared
-        curve false-rejected 21.7% of open eyes under EAR."""
-        def eyes_open(source):
+    def test_eyes_open_handling_is_per_source(self):
+        """Refit 2026-08-29 on the merged labelled set (285 faces): the
+        blendshapes curve places culling's 0.4 boundary at raw 0.50
+        (FR 2.2%), and EAR — no usable separation (open p50 = 0.32,
+        closed spanning 0.0–1.0) — abstains rather than guesses
+        (design 04 §5: detector abstained ≠ genuinely bad)."""
+        def comp(source, raw):
             m = Measurements(frame=sharp_frame(),
-                             faces=[face(open_l=0.55, open_r=0.55,
+                             faces=[face(open_l=raw, open_r=raw,
                                          eye_source=source)])
-            return score(m, "portrait").components["eyes_open"]["value"]
+            return score(m, "portrait").components["eyes_open"]
 
-        # Same raw value, opposite verdicts — below culling's 0.4 boundary
-        # for blendshapes (labelled closed at 0.33–0.59), above it for EAR.
-        assert eyes_open("mediapipe_blendshapes") < 0.4
-        assert eyes_open("ear_landmarks") > 0.4
-        # Provenance lands in the evidence, per design 04 §1.
-        m = Measurements(frame=sharp_frame(),
-                         faces=[face(eye_source="ear_landmarks")])
-        rec = score(m, "portrait")
-        assert rec.components["eyes_open"]["evidence"]["eye_source"] == \
-            "ear_landmarks"
+        assert comp("mediapipe_blendshapes", 0.55)["value"] > 0.4
+        assert comp("mediapipe_blendshapes", 0.45)["value"] < 0.4
+        # EAR abstains: null value, weight renormalizes away, and the
+        # evidence says why — never a zero (design 04 §5).
+        ear = comp("ear_landmarks", 0.55)
+        assert ear["value"] is None
+        assert ear["evidence"]["reason"] == "unreliable_source_abstained"
+        assert ear["evidence"]["eye_source"] == "ear_landmarks"
+        # Provenance lands in the evidence for scored sources (design 04 §1).
+        bl = comp("mediapipe_blendshapes", 0.7)
+        assert bl["evidence"]["eye_source"] == "mediapipe_blendshapes"
 
     def test_focus_cliff(self):
         """Sharp vs missed must be a cliff, not a slope (design 04 §2.1)."""

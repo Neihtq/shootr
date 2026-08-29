@@ -105,6 +105,7 @@ def weights_hash(profile: str) -> str:
          "penalties": FLAG_PENALTIES,
          "curves": {"eye": EYE_FOCUS_CURVE, "open": EYES_OPEN_CURVE,
                     "open_by_source": EYES_OPEN_CURVES,
+                    "open_abstain": sorted(ABSTAIN_EYE_SOURCES),
                     "frame": FRAME_SHARPNESS_CURVE}},
         sort_keys=True,
     )
@@ -132,23 +133,29 @@ EYE_FOCUS_CURVE = [(0.0, 0.0), (0.25, 0.2), (0.45, 0.6), (0.70, 1.0)]
 # Fallback for unknown eye sources only; known sources are calibrated below.
 EYES_OPEN_CURVE = [(0.0, 0.0), (0.35, 0.1), (0.60, 0.4), (0.85, 1.0)]
 
-# Per-source calibration (hand-labelled frames, 2026-08-20, 33 faces from a
-# real event shoot — docs/benchmarks/2026-08-20-blink-labels/). The raw
-# scales differ per detector, so one shared curve silently mis-scores the
-# other detector — measured: the fallback curve's effective cut (raw 0.60)
-# false-rejected 21.7% of open eyes under EAR, whose real separation point
-# is 0.42. Each curve places score 0.4 (culling's "eyes closed" boundary)
-# at that source's measured separation. n=6 closed faces — provisional;
-# refit in M2 with catalog history (design 04 §7).
+# Per-source calibration, refit 2026-08-29 on the merged labelled set
+# (33 faces, 2026-08-20 round + 252 faces from the real wedding's
+# blink-rejected keepers — docs/benchmarks/2026-08-29-blink-labels-wedding/).
+# Each curve places score 0.4 (culling's "eyes closed" boundary) at that
+# source's measured separation. Costs are asymmetric (design 06 §7): a
+# false reject discards a good photo; a false accept merely lets a blink
+# compete — and the wedding's 3 truly-closed faces were on frames the user
+# KEPT, so high FA tolerance matches real culling behavior.
 EYES_OPEN_CURVES: dict[str, list[tuple[float, float]]] = {
-    # EAR: labelled closed 0.00–0.41, open μ0.85 (min 0.29). Best cut 0.42:
-    # FR 4.3%, FA 16.7%.
-    "ear_landmarks": [(0.0, 0.0), (0.30, 0.1), (0.42, 0.4), (0.75, 1.0)],
-    # Blendshapes: labelled closed 0.33–0.59, open 0.65–0.99 — clean gap;
-    # 0.62 is its midpoint. FR 0%, FA 0% on the labelled set.
-    "mediapipe_blendshapes": [(0.0, 0.0), (0.45, 0.1), (0.62, 0.4),
-                              (0.85, 1.0)],
+    # Blendshapes: merged opens p5=0.58 p50=0.78; closed 0.28–0.78 (overlap
+    # is real — expressions, not noise). Cut 0.50: FR 2.2%, FA 78%.
+    "mediapipe_blendshapes": [(0.0, 0.0), (0.30, 0.1), (0.50, 0.4),
+                              (0.80, 1.0)],
 }
+
+# Sources with no usable open/closed separation on the merged labels abstain
+# (design 04 §5: "detector abstained" ≠ "genuinely bad"). EAR measured:
+# merged open p50 = 0.32 with closed spanning 0.0–1.0 — its best cut still
+# false-rejects ~20% of open eyes at 44% FA. The 2026-08-20 round (n=33)
+# was too small to see this; the wedding keepers exposed it (76% FR at the
+# culling cut). EAR survives only on faces MediaPipe refused, where it is
+# least trustworthy — abstain rather than guess.
+ABSTAIN_EYE_SOURCES: frozenset[str] = frozenset({"ear_landmarks"})
 
 # Whole frame soft → motion blur / shake, not a focus miss: eye normalization
 # against a soft frame is meaningless (design 04 §2.1 guard).
@@ -253,6 +260,9 @@ def _eyes_open(face: FaceMeasurement | None) -> Component:
         return Component(None, {"reason": "no_face"})
     if face.yaw is not None and abs(face.yaw) > MAX_YAW_FOR_EYE_METRICS:
         return Component(None, {"reason": "abstained_extreme_yaw", "yaw": face.yaw})
+    if face.eye_source in ABSTAIN_EYE_SOURCES:
+        return Component(None, {"reason": "unreliable_source_abstained",
+                                "eye_source": face.eye_source})
     opens = {"left": face.left.open, "right": face.right.open}
     measured = {k: v for k, v in opens.items() if v is not None}
     if not measured:

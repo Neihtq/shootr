@@ -93,3 +93,29 @@ M2 curve refit (merge both label sets; note one truly-closed face scored
 47.2% → 46.9%: freed frames mostly became `near-duplicate` rejects, i.e.
 within-group ordering — the weight-fitting target — dominates recall, as
 diagnosed. Moment coverage ticked up (8 → 6 pick-less keeper groups).
+
+## Addendum 2: M2 calibration round — curve refit lands, weight fit measured and declined
+
+**Eyes-open refit** (merged 285-face label set): EAR has no usable separation
+(open p50 = 0.32, closed spanning 0.0–1.0) → `ear_landmarks` now **abstains**
+(`ABSTAIN_EYE_SOURCES`); blendshapes boundary moved 0.62 → 0.50 raw
+(FR 2.2%, FA 78% — overlap is genuine expressions; the user's truly-closed
+keepers prove FA tolerance is aligned). Blink-reason false-rejects: 68
+(EAR-live) → 30 (backfill) → **20** (refit), survivors are honest calls.
+
+**Weight fit** (`engine/tools/fit_weights.py`, pairwise ranking within shot
+groups, softmax weights, L2 toward priors, group train/holdout): within-group
+ordering by the six technical metrics is chance — priors 53.0% holdout
+pairwise / 24.3% top-1, best fit (λ=1.0) 53.2% / 27.0%. Cheap non-score
+signals also fail: earlier-in-burst 54.1%, more-faces 51.7%, bigger-face
+49.9%. **Priors retained** (a fit that doesn't beat the baseline doesn't
+ship). Conclusion recorded in design 04 §7: within-group agreement needs an
+expression/peak-moment measurement — MediaPipe's landmarker (already in the
+backfill/analyzer path) emits smile/brow blendshapes, a near-free candidate —
+validated by its own labelling round before it drives culling.
+
+**keep_n note:** the engine's min-1-pick-per-group coverage guard floors
+picks at 961 (the shot-group count) vs the user's 559 keeps — a 12.6% keep
+rate is structurally unreachable on this grouping, and with ~chance ordering,
+tightening keep_n trades keeper recall 1:1. Left as is; revisit when an
+expression metric gives ordering real teeth.
