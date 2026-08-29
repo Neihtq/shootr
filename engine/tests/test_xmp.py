@@ -169,3 +169,53 @@ class TestCsv:
         text = out.read_text()
         assert "a.CR3,pick" in text and "c.CR3,alt" in text
         assert "b.CR3" not in text
+
+
+class TestDevelopWriter:
+    """crs: develop writeback (design 08 → 07 §1 Rule 2): predictions never
+    replace the user's own develop settings — no override flag exists."""
+
+    def test_writes_params_and_pv_to_fresh_sidecar(self, tmp_path):
+        from shootr.xmp import write_develop
+        p = tmp_path / "IMG_1.xmp"
+        write_develop(p, {"Exposure2012": 0.3, "Blacks2012": -12.0},
+                      process_version="15.4", backup_dir=tmp_path / "bk")
+        text = p.read_text()
+        assert 'crs:Exposure2012="+0.3"' in text
+        assert 'crs:Blacks2012="-12"' in text
+        assert 'crs:ProcessVersion="15.4"' in text
+        assert 'xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"' \
+            in text
+
+    def test_refuses_user_edited_sidecar_unconditionally(self, tmp_path):
+        from shootr.xmp import DevelopConflict, write_develop
+        p = tmp_path / "IMG_1.xmp"
+        p.write_text('<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
+                     ' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-'
+                     'rdf-syntax-ns#">\n'
+                     '  <rdf:Description rdf:about=""\n'
+                     '    crs:Exposure2012="+1.00">\n'
+                     '  </rdf:Description>\n </rdf:RDF>\n</x:xmpmeta>\n')
+        before = p.read_text()
+        import pytest as _pytest
+        with _pytest.raises(DevelopConflict):
+            write_develop(p, {"Exposure2012": 0.3}, "15.4",
+                          tmp_path / "bk")
+        assert p.read_text() == before  # untouched, byte for byte
+
+    def test_preserves_unowned_fields_and_backs_up(self, tmp_path):
+        from shootr.xmp import write_develop
+        p = tmp_path / "IMG_1.xmp"
+        p.write_text('<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
+                     ' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-'
+                     'rdf-syntax-ns#">\n'
+                     '  <rdf:Description rdf:about=""\n'
+                     '    xmp:Rating="5" myapp:custom="keep-me">\n'
+                     '  </rdf:Description>\n </rdf:RDF>\n</x:xmpmeta>\n')
+        write_develop(p, {"Dehaze": 15.0}, "15.4", tmp_path / "bk")
+        text = p.read_text()
+        assert 'myapp:custom="keep-me"' in text
+        assert 'xmp:Rating="5"' in text
+        assert 'crs:Dehaze="15"' in text
+        backups = list((tmp_path / "bk").rglob("*.xmp"))
+        assert len(backups) == 1

@@ -261,16 +261,29 @@ Full numbers + addendum: `docs/benchmarks/2026-08-29-first-cull-agreement.md`.
   (near-duplicate substitution dominates), blink-reason false-rejects 68 → 20
 - Online adjustment from `user_override` entries
 
-## M3 — Style learning
+## M3 — Style learning — core built + evaluated 2026-08-30
 
-- Delta targets: value − as-shot baseline; Temp as log-ratio, Tint linear (`08 §2`)
-- Look-family clustering over edit-history deltas, labelled with traits + thumbnails (§3)
-- k-NN predictor: family-filtered, softmax-weighted blend, confidence as first-class
-  output (§4)
-- Guardrails: confidence gate (abstain), clamp to family's observed range, highlight-clip
-  sanity check, per-parameter opt-out, PV match (§6)
-- Baseline comparison: must beat "family median as preset" or ship the preset (§7)
-- Evaluation: per-parameter MAE in real units, direction agreement, coverage
+First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
+**k-NN beats the family median 11/12 params on leave-one-shot-group-out**
+(Exposure MAE 0.282 vs 0.347 EV, coverage 99.1%) — the model ships, not the preset.
+8 look families discovered inside one wedding (they split by light, not genre).
+
+- ~~Delta targets~~ — modern crs sliders (default 0 → delta = value); **Temp/Tint
+  excluded**: `analysis.frame.as_shot_wb` is a recorded analyzer-contract gap (§2.2)
+- ~~Look-family clustering~~ — `style.cluster_families` (agglomerative, correlation
+  distance, no scipy) + trait labels; family thumbnails = UI work, pending
+- ~~k-NN predictor~~ — family-filtered softmax blend, confidence first-class (§4)
+- ~~Guardrails~~ — confidence gate (abstain), clamp to family range, PV written with
+  every prediction; highlight-clip sanity check + per-parameter opt-out (UI) pending;
+  never-overwrite is `DevelopConflict` with deliberately no override flag
+- ~~Baseline comparison~~ (§7) — run honest (group-excluded); median wins only
+  ColorGradeMidtoneHue → first opt-out candidate
+- ~~Evaluation~~ — `engine/tools/eval_style.py`; re-run per new shoot imported
+- ~~XMP `crs:` writer~~ — `xmp.write_develop` via the `07 §1` Rule-2 protocol;
+  `ProcessVersion` stamped on every write
+- API endpoints + client UI (family picker, prediction preview, opt-outs) — not started
+- JPEG+RAW pair validation (trends/direction, not pixel equality) — needs exported pairs
+- Gradient-boosted trees only if k-NN measurably underperforms — not currently indicated
 - XMP `crs:` writer via the `07 §1` Rule-2 protocol; `ProcessVersion` discipline
 - JPEG+RAW pair validation (trends/direction, not pixel equality)
 - Gradient-boosted trees only if k-NN measurably underperforms

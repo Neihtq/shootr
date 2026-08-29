@@ -203,6 +203,50 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
+class DevelopConflict(RuntimeError):
+    """The sidecar already carries develop settings — the user's edit.
+    Never overwritten (design 08 §6 / 07 §1 Rule 2), no confirm override:
+    a predicted edit is a convenience; the user's edit is the work."""
+
+
+CRS_NS = 'xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"'
+
+
+def _fmt_crs(value: float) -> str:
+    if isinstance(value, float) and not value.is_integer():
+        s = f"{value:+.2f}".rstrip("0").rstrip(".")
+        return s
+    return str(int(value))
+
+
+def write_develop(xmp_path: Path, params: dict[str, float],
+                  process_version: str, backup_dir: Path) -> Path:
+    """Write predicted global develop params as crs: attributes.
+
+    Same protocol as select writeback: read → refuse-if-user-edited →
+    backup → edit in place → atomic write. A sidecar with ANY existing
+    crs content raises DevelopConflict — predictions never replace the
+    user's own develop settings, and there is deliberately no override
+    flag on this path.
+    """
+    if xmp_path.exists():
+        _, _, has_crs = read_sidecar_state(xmp_path)
+        if has_crs:
+            raise DevelopConflict(str(xmp_path))
+        _backup(xmp_path, backup_dir)
+        text = xmp_path.read_text(errors="replace")
+    else:
+        text = MINIMAL_SIDECAR
+    if "xmlns:crs=" not in text:
+        text = _insert_attr(text, CRS_NS)
+    text = _insert_attr(
+        text, f'crs:ProcessVersion="{process_version}"')
+    for name in sorted(params):
+        text = _insert_attr(text, f'crs:{name}="{_fmt_crs(params[name])}"')
+    _atomic_write(xmp_path, text)
+    return xmp_path
+
+
 def export_csv(entries: list[tuple[Path, str]], out: Path) -> None:
     """The practical path (design 07 §3.2): a list the user can act on in
     LrC regardless of sidecar/DNG issues."""
