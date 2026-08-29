@@ -80,7 +80,12 @@ outcome and can be built now.
 - Body pose + objectness saliency requests (grouping consumes pose vectors; deferred
   with pose-vector construction)
 - Faceprint extraction (`VNGenerateFaceprint` API needs verification on this SDK)
-- MediaPipe blendshape refiner (Python side, swappable)
+- ~~MediaPipe blendshape refiner (Python side, swappable)~~ — shipped as
+  `engine/tools/backfill_blendshapes.py` 2026-08-29 (SCRFD+MediaPipe over stored
+  face rows, bbox-IoU match, provenance-honest); validated on the wedding: blink
+  false-rejects 68 → 30, survivors are honest expression-overlap cases. New
+  analyze runs still emit EAR first — wire the refiner into the analyze job
+  (or cut over the analyzer) so fresh shoots don't need a manual backfill
 - Worker-pool concurrency (N processes, backpressure) — belongs to orchestration (`09`)
 - ⚠ Validate against real RAWs: enhancement-off properties on CR3/ARW/RAF, eye-sharpness
   accuracy, per-photo latency — the benchmark gate
@@ -220,8 +225,9 @@ outcome and can be built now.
 keepers in pick-less groups) but pick recall 32% — within-group ordering is the
 gap. 26% of false-rejects are blink false-positives from the live path still
 running EAR (`eye_source='ear_landmarks'`; blendshapes exist only in the Python
-analyzer) → **wiring blendshapes into the live eye path is the highest-leverage
-pre-fitting fix**. Full numbers: `docs/benchmarks/2026-08-29-first-cull-agreement.md`.
+analyzer) → fixed same day by the blendshape backfill (68 → 30 blink false-rejects;
+headline barely moved, confirming within-group ordering as the fitting target).
+Full numbers + addendum: `docs/benchmarks/2026-08-29-first-cull-agreement.md`.
 
 - Catalog copy reader: copy `.lrcat`+`-wal`+`-shm`, open `mode=ro`, version probe,
   validate-before-query, degrade to sidecar-only (`07 §2`) — done manually

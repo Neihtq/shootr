@@ -69,3 +69,27 @@ hand-label candidates to grow the n=6 closed-eye calibration set.
   (`Adobe_imageDevelopSettings`, 559/560) → M3 style data exists in the
   same catalog, not just cull data
 - Still waiting: ARW/RAF samples (user: "need to wait a little")
+
+## Addendum (same day): blendshape backfill measured
+
+Hand-label round on the 68 blink-rejected keepers
+(`2026-08-29-blink-labels-wedding/`): 252 faces judged, **3 truly closed** —
+96% detector error. EAR at culling's 0.4 cut false-rejects 76% of open eyes
+on these frames; blendshapes 0% at the same cut.
+
+`engine/tools/backfill_blendshapes.py` (the 03 §5 swappable blink refiner,
+as a backfill) re-ran SCRFD+MediaPipe over all 2,973 face-bearing photos in
+21.6 min, 0 failures; 6,042/6,685 faces (90%) matched by bbox IoU and
+updated to `mediapipe_blendshapes` (real yaw/pitch now populated — the
+Vision path had stored zeros, silently disarming yaw abstention). Unmatched
+faces keep EAR provenance.
+
+Rescore + reselect (selection 13, 11 s — the analysis/score split earning
+its keep): blink-reason false-rejects **68 → 30**, and the survivors are
+all blendshape-judged faces in the honest 0.2–0.61 overlap zone
+(laugh/squint expressions the user kept) — a calibration question for the
+M2 curve refit (merge both label sets; note one truly-closed face scored
+0.69, above the curve's 0.62 midpoint). Headline false-reject moved only
+47.2% → 46.9%: freed frames mostly became `near-duplicate` rejects, i.e.
+within-group ordering — the weight-fitting target — dominates recall, as
+diagnosed. Moment coverage ticked up (8 → 6 pick-less keeper groups).
