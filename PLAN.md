@@ -376,8 +376,9 @@ swap in via `SHOOTR_HELPER`). Adoption remains a post-A/B user decision:
 - AdaFace IR-101 still unpinned (no official ONNX artifact) — ArcFace R50
   floor active; CoreML EP measured pathological on DINOv2-L (~20 min compile,
   then fails) → CPU default on macOS, `SHOOTR_ORT_PROVIDERS` to override
-- Web client absorbs remaining native-only control-panel features (library
-  management) — on non-Mac platforms web is the only surface
+- ~~Web client absorbs library management~~ (2026-08-30) — add-by-path with scan
+  summary, remove with explicit no-default-yes dialog, proposal cards with genre
+  picker + create-&-analyze; on non-Mac platforms web is the only surface
 - Then the ports are packaging + platform ingest (volume identity/offline
   semantics on NTFS/ext4, 02 §)
 
