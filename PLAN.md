@@ -86,10 +86,9 @@ outcome and can be built now.
 - ~~MediaPipe blendshape refiner (Python side, swappable)~~ — shipped as
   `engine/tools/backfill_blendshapes.py` 2026-08-29 (SCRFD+MediaPipe over stored
   face rows, bbox-IoU match, provenance-honest); validated on the wedding: blink
-  false-rejects 68 → 30, survivors are honest expression-overlap cases. New
-  analyze runs still emit EAR first — wire the refiner into the analyze job
-  (or cut over the analyzer) so fresh shoots don't need a manual backfill
-- Worker-pool concurrency (N processes, backpressure) — belongs to orchestration (`09`)
+  false-rejects 68 → 30, survivors are honest expression-overlap cases.
+  Promoted to `shootr.eye_refiner` and wired into the analyze job's finalize
+  2026-08-30 — fresh shoots refine automatically; tool remains as CLI
 - ⚠ Validate against real RAWs: enhancement-off properties on CR3/ARW/RAF, eye-sharpness
   accuracy, per-photo latency — the benchmark gate
 
