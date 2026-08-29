@@ -2,10 +2,15 @@
  * the pipeline actions. Everything here is one level above Group Review. */
 
 import { useState } from "react";
-import { del, post } from "../api/client";
-import { useLibraries, useShoots } from "../api/hooks";
-import { useQueryClient } from "@tanstack/react-query";
+import {
+  useAddLibrary,
+  useAnalyzeShoot,
+  useLibraries,
+  useShoots,
+} from "../api/hooks";
+import type { Library, LibraryScanResult } from "../api/types";
 import { ProposalList } from "./ProposalList";
+import { RemoveLibraryDialog } from "./RemoveLibraryDialog";
 
 /** Why an analyze job stopped, in the user's terms. An unknown reason still
  * renders (as itself) rather than vanishing — silence here reads as "nothing
@@ -23,26 +28,24 @@ export function ShootList({
 }) {
   const { data: libraries } = useLibraries();
   const { data: shoots } = useShoots();
-  const qc = useQueryClient();
+  const addLibrary = useAddLibrary();
+  const analyze = useAnalyzeShoot();
   const [busy, setBusy] = useState<string | null>(null);
   const [newRoot, setNewRoot] = useState("");
+  // Last scan's engine-reported summary, shown inline: "added 0" on a wrong
+  // path must be visible, not buried in a dismissed toast.
+  const [lastScan, setLastScan] = useState<LibraryScanResult | null>(null);
+  const [removing, setRemoving] = useState<Library | null>(null);
 
-  const addLibrary = async () => {
+  const runAddLibrary = async () => {
     if (!newRoot) return;
+    // Scanning is synchronous in the engine and can take seconds on a
+    // large folder; without this the button looks dead.
     setBusy("scanning…");
     try {
-      const r = await post<{
-        id: number;
-        scan: { added: number; unchanged: number; errors: number };
-      }>("/api/libraries", { root_path: newRoot });
+      const r = await addLibrary.mutateAsync(newRoot);
       setNewRoot("");
-      qc.invalidateQueries();
-      if (r.scan.added === 0 && r.scan.unchanged === 0) {
-        alert(
-          `No photos found in ${newRoot}\n\n` +
-            "Looked for RAW (CR2/CR3/ARW/RAF) and JPEG files.",
-        );
-      }
+      setLastScan(r);
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -56,10 +59,7 @@ export function ShootList({
     // here while analysis runs was a race (empty scores on first run).
     setBusy("starting analysis…");
     try {
-      const r = await post<{ job_id: number; total: number; chained: boolean }>(
-        `/api/shoots/${shootId}/analyze`,
-      );
-      qc.invalidateQueries();
+      const r = await analyze.mutateAsync(shootId);
       // Stay on the list while it runs: the shoot has no groups or scores
       // until the chained steps finish, so navigating there would show an
       // empty review. The row shows progress and unlocks itself.
@@ -89,18 +89,7 @@ export function ShootList({
               <span className="text-xs text-neutral-500">(offline — showing last known contents)</span>
             )}
             <button
-              onClick={async () => {
-                if (
-                  !window.confirm(
-                    `Remove this library from Shootr?\n\n${lib.root_path}\n\n` +
-                      "Scan data, analysis, and selections are removed from " +
-                      "the app. Your photo files are NOT touched.",
-                  )
-                )
-                  return;
-                await del(`/api/libraries/${lib.id}`);
-                qc.invalidateQueries();
-              }}
+              onClick={() => setRemoving(lib)}
               className="ml-auto rounded border border-neutral-800 px-2 py-0.5 text-xs text-neutral-500 hover:border-red-900 hover:text-red-400"
             >
               Remove
@@ -111,17 +100,47 @@ export function ShootList({
           <input
             value={newRoot}
             onChange={(e) => setNewRoot(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") runAddLibrary();
+            }}
             placeholder="/Volumes/Shoots2026/…"
             className="flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-200"
           />
           <button
-            onClick={addLibrary}
-            disabled={!!busy}
+            onClick={runAddLibrary}
+            disabled={!!busy || !newRoot}
             className="rounded border border-neutral-700 px-3 py-1 hover:bg-neutral-800 disabled:opacity-50"
           >
             Add & scan
           </button>
         </div>
+        {/* A browser can't open a native folder picker for an arbitrary
+            absolute path, so the path is typed or pasted. */}
+        <div className="mt-1 text-xs text-neutral-500">
+          Full path to a photo folder (e.g. an external drive). Paste it from
+          Finder: select the folder, ⌥⌘C. Re-adding a known path rescans it.
+        </div>
+        {lastScan && (
+          <div className="mt-2 text-xs text-neutral-400">
+            Scanned {lastScan.root_path}: {lastScan.scan.added} added,{" "}
+            {lastScan.scan.unchanged} unchanged
+            {lastScan.scan.errors > 0 && (
+              <span className="text-amber-500">
+                , {lastScan.scan.errors} unreadable
+              </span>
+            )}
+            {lastScan.scan.backfilled > 0 &&
+              `, ${lastScan.scan.backfilled} re-probed`}
+            .
+            {lastScan.scan.added === 0 && lastScan.scan.unchanged === 0 && (
+              <span className="text-amber-500">
+                {" "}
+                No photos found — looked for RAW (CR2/CR3/ARW/RAF) and JPEG
+                files.
+              </span>
+            )}
+          </div>
+        )}
       </section>
 
       {libraries?.map((lib) => (
@@ -217,6 +236,13 @@ export function ShootList({
         })}
         {busy && <div className="mt-2 text-xs text-neutral-400">{busy}</div>}
       </section>
+
+      {removing && (
+        <RemoveLibraryDialog
+          library={removing}
+          onClose={() => setRemoving(null)}
+        />
+      )}
     </div>
   );
 }

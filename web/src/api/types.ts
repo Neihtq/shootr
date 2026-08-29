@@ -116,6 +116,40 @@ export interface Library {
   online: boolean;
 }
 
+/** The engine's allowed scoring profiles (api.py rejects anything else with
+ * `invalid_profile`). Mirrored here so pickers can't offer a fifth genre. */
+export const PROFILES = ["portrait", "event", "landscape", "street"] as const;
+export type Profile = (typeof PROFILES)[number];
+
+/** POST /api/libraries — add (or rescan; re-adding a known path is never a
+ * duplicate) a library root. */
+export interface LibraryScanResult {
+  id: number;
+  root_path: string;
+  scan: {
+    added: number;
+    unchanged: number;
+    errors: number;
+    /** Rows healed with metadata a previous broken probe left NULL. */
+    backfilled: number;
+  };
+}
+
+/** DELETE /api/libraries/{id}. `note` is non-null when selections were
+ * already exported: the XMP sidecars stay in the user's files. */
+export interface LibraryDeleteResult {
+  deleted: number;
+  note: string | null;
+}
+
+/** POST /api/shoots/{id}/analyze. `chained` = everything was already
+ * analyzed, so group/score/select ran inline and there is no job to watch. */
+export interface AnalyzeStart {
+  job_id: number;
+  total: number;
+  chained: boolean;
+}
+
 export interface ShootProposal {
   photo_ids: number[];
   start: string | null; // null when no photo in the folder has EXIF dates

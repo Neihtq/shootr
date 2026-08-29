@@ -8,13 +8,17 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { get, patch, post } from "./client";
+import { del, get, patch, post } from "./client";
 import type {
+  AnalyzeStart,
   ExportPreview,
   Group,
   JobProgress,
   Library,
+  LibraryDeleteResult,
+  LibraryScanResult,
   PhotoDetail,
+  Profile,
   Selection,
   SelectionState,
   SharpnessMap,
@@ -24,6 +28,53 @@ import type {
 
 export const useLibraries = () =>
   useQuery({ queryKey: ["libraries"], queryFn: () => get<Library[]>("/api/libraries") });
+
+/** Add (or rescan) a library root. The scan is synchronous in the engine and
+ * can take seconds on a large folder — callers show a pending state. */
+export const useAddLibrary = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rootPath: string) =>
+      post<LibraryScanResult>("/api/libraries", { root_path: rootPath }),
+    // New photos change libraries, proposals, and shoot counts alike.
+    onSuccess: () => qc.invalidateQueries(),
+  });
+};
+
+/** Removes the library's rows from the app database only — the engine never
+ * touches files on disk (design README rule 2). Callers must confirm first. */
+export const useDeleteLibrary = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (libraryId: number) =>
+      del<LibraryDeleteResult>(`/api/libraries/${libraryId}`),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+};
+
+export const useCreateShoot = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      library_id: number;
+      name: string;
+      profile: Profile;
+      photo_ids: number[];
+    }) => post<{ id: number }>("/api/shoots", body),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+};
+
+/** Start (or resume — the engine reuses a stopped job) analysis. Progress
+ * surfaces through the SSE job stream (JobHeader); nothing to poll here. */
+export const useAnalyzeShoot = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (shootId: number) =>
+      post<AnalyzeStart>(`/api/shoots/${shootId}/analyze`),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+};
 
 export const useShoots = () =>
   useQuery({

@@ -7,12 +7,13 @@
  */
 
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { post } from "../api/client";
-import { useShootProposals } from "../api/hooks";
-import type { ShootProposal } from "../api/types";
-
-const PROFILES = ["portrait", "event", "landscape", "street"] as const;
+import {
+  useAnalyzeShoot,
+  useCreateShoot,
+  useShootProposals,
+} from "../api/hooks";
+import type { Profile, ShootProposal } from "../api/types";
+import { PROFILES } from "../api/types";
 
 function proposalLabel(p: ShootProposal): string {
   const day = p.start?.slice(0, 10) ?? "undated";
@@ -22,25 +23,29 @@ function proposalLabel(p: ShootProposal): string {
 
 export function ProposalList({ libraryId }: { libraryId: number }) {
   const { data: proposals, isLoading } = useShootProposals(libraryId);
-  const qc = useQueryClient();
+  const createShoot = useCreateShoot();
+  const analyze = useAnalyzeShoot();
   const [busy, setBusy] = useState(false);
   // Per-proposal edits, keyed by index.
   const [names, setNames] = useState<Record<number, string>>({});
-  const [profiles, setProfiles] = useState<Record<number, string>>({});
+  const [profiles, setProfiles] = useState<Record<number, Profile>>({});
   // Checked proposals for combining ("morning ceremony + evening reception
   // is ONE wedding" — design 02 §4's two-part-wedding case).
   const [checked, setChecked] = useState<Set<number>>(new Set());
 
-  const confirm = async (i: number, p: ShootProposal) => {
+  const confirm = async (i: number, p: ShootProposal, andAnalyze: boolean) => {
     setBusy(true);
     try {
-      await post("/api/shoots", {
+      const shoot = await createShoot.mutateAsync({
         library_id: libraryId,
         name: names[i] || proposalLabel(p),
         profile: profiles[i] || "event",
         photo_ids: p.photo_ids,
       });
-      qc.invalidateQueries();
+      // "Create & analyze" mirrors the native proposal card: one gesture
+      // from proposal to running pipeline. Progress shows in the SSE job
+      // header; the shoot row unlocks itself when the engine finishes.
+      if (andAnalyze) await analyze.mutateAsync(shoot.id);
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -54,14 +59,13 @@ export function ProposalList({ libraryId }: { libraryId: number }) {
     const parts = indices.map((i) => proposals[i]);
     setBusy(true);
     try {
-      await post("/api/shoots", {
+      await createShoot.mutateAsync({
         library_id: libraryId,
         name: names[indices[0]] || proposalLabel(parts[0]),
         profile: profiles[indices[0]] || "event",
         photo_ids: parts.flatMap((p) => p.photo_ids),
       });
       setChecked(new Set());
-      qc.invalidateQueries();
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -129,7 +133,7 @@ export function ProposalList({ libraryId }: { libraryId: number }) {
             <select
               value={profiles[i] ?? "event"}
               onChange={(e) =>
-                setProfiles((pr) => ({ ...pr, [i]: e.target.value }))
+                setProfiles((pr) => ({ ...pr, [i]: e.target.value as Profile }))
               }
               className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-200"
             >
@@ -140,11 +144,19 @@ export function ProposalList({ libraryId }: { libraryId: number }) {
               ))}
             </select>
             <button
-              onClick={() => confirm(i, p)}
+              onClick={() => confirm(i, p, false)}
               disabled={busy}
-              className="rounded border border-emerald-800 bg-emerald-950 px-3 py-1 text-sm text-emerald-200 hover:bg-emerald-900 disabled:opacity-50"
+              className="rounded border border-neutral-700 px-3 py-1 text-sm hover:bg-neutral-800 disabled:opacity-50"
             >
               Create shoot
+            </button>
+            <button
+              onClick={() => confirm(i, p, true)}
+              disabled={busy}
+              title="Create the shoot and start analysis now — progress shows in the header"
+              className="rounded border border-emerald-800 bg-emerald-950 px-3 py-1 text-sm text-emerald-200 hover:bg-emerald-900 disabled:opacity-50"
+            >
+              Create & analyze
             </button>
           </div>
         </div>
