@@ -189,8 +189,15 @@ work and stop making corrections.
 
 ## 8. Open questions
 
-- **Camera burst tags**: confirm availability for CR3/ARW/RAF in the benchmark set. If
-  reliable, promote from "checked first" to primary and demote the heuristics.
+- **Camera burst tags** — measured 2026-08-30 on the real wedding (150 CR3 + 150 CR2):
+  CR3 carries per-frame drive mode in Canon MakerNotes `CameraSettings[5]` (0 = single
+  on 12% of frames, continuous tiers 4/5/8 on the rest), readable only via the CR3 CMT
+  walker (Python analyzer; ImageIO cannot). It is a *mode*, not a burst membership — a
+  camera parked in continuous-high still takes deliberate singles — so it stays a
+  **negative gate** (single-drive frames never burst-deduped), not a primary signal.
+  CR2 via exifread was unreliable (SequenceNumber mostly absent, drive enum undecoded).
+  Wire the gate when the analyzer cutover exposes the tag in `probe`; ARW/RAF still
+  unverified.
 - **Embedding thresholds** (0.20 shot / 0.45 scene) are guesses. Tune against
   hand-grouped real bursts; expect them to differ per genre (a wedding dance floor changes
   faster than a portrait session).

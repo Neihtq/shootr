@@ -122,8 +122,10 @@ outcome and can be built now.
 - ~~Pose grouping: agglomerative, cross-session, abstain on low confidence (§4)~~
 - ~~Person identity: faceprint clustering, split-biased threshold, orthogonal axis (§5)~~
 - ~~User corrections: split/merge pins re-applied after regroup, never break brackets (§7)~~
-- Camera burst-tag check (CR3/ARW/RAF drive-mode metadata) before heuristics — needs
-  real files to verify tag availability (§8)
+- ~~Camera burst-tag *availability check*~~ — measured 2026-08-30 (05 §8): CR3 has
+  per-frame drive mode (CMT walker only — rides the analyzer cutover as a negative
+  gate); CR2-via-exifread unreliable; ARW/RAF pending samples. Gate wiring deferred
+  to the cutover's probe contract
 - Scene-blocking for person clustering at >20k faces (§6) — brute force fine at shoot scale
 - Pose vector *construction* (hip-translate, torso-scale, joint-confidence filter) —
   belongs to the Swift helper / analysis side; grouping consumes the normalized vector
