@@ -175,3 +175,72 @@ class TestRegistry:
             filename="weights.onnx")
         got = models.ensure(spec)
         assert got.read_bytes() == payload
+
+
+class TestRAF:
+    """Fuji's container is not TIFF — exifread returns nothing for a RAF, so
+    the probe read nothing on every Fuji file until this unwrapping landed
+    (found by public X-T50/X-E5 samples, 2026-08-30). Synthetic containers
+    here; the real-file check is a benchmark, not a unit test."""
+
+    MAGIC = b"FUJIFILMCCD-RAW "
+
+    def _raf(self, tmp_path, *, jpeg=b"\xff\xd8fake-jpeg-body",
+             model=b"X-T50", size_tag=(5152, 7728), truncate=None):
+        import struct
+
+        head = bytearray(0x6C)
+        head[0:16] = self.MAGIC
+        head[0x10:0x14] = b"0201"
+        head[0x1C:0x1C + len(model)] = model
+        # CFA header: entry count + one (tag, size, value) record.
+        cfa = struct.pack(">I", 1) + struct.pack(">HH", 0x0111, 4) + \
+            struct.pack(">HH", *size_tag)
+        jpeg_off = len(head)
+        cfa_off = jpeg_off + len(jpeg)
+        struct.pack_into(">II", head, 0x54, jpeg_off, len(jpeg))
+        struct.pack_into(">II", head, 0x5C, cfa_off, len(cfa))
+        blob = bytes(head) + jpeg + cfa
+        if truncate is not None:
+            blob = blob[:truncate]
+        p = tmp_path / "DSCF0001.RAF"
+        p.write_bytes(blob)
+        return p
+
+    def test_extracts_embedded_jpeg_and_model(self, tmp_path):
+        from shootr_analyzer.raf import camera_model, extract_jpeg
+
+        p = self._raf(tmp_path)
+        assert extract_jpeg(p) == b"\xff\xd8fake-jpeg-body"
+        assert camera_model(p) == "X-T50"
+
+    def test_reads_frame_size_not_preview_size(self, tmp_path):
+        from shootr_analyzer.raf import raw_dimensions
+
+        # Tag 0x0111 stores (height, width); callers want (width, height).
+        assert raw_dimensions(self._raf(tmp_path)) == (7728, 5152)
+
+    def test_non_raf_and_truncated_files_return_none(self, tmp_path):
+        from shootr_analyzer.raf import (camera_model, extract_jpeg,
+                                         raw_dimensions)
+
+        other = tmp_path / "x.RAF"
+        other.write_bytes(b"II*\x00 not a fuji container")
+        assert extract_jpeg(other) is None
+        assert raw_dimensions(other) is None
+        assert camera_model(other) is None
+        short = self._raf(tmp_path, truncate=0x20)
+        assert extract_jpeg(short) is None
+        assert raw_dimensions(short) is None
+
+    def test_lying_offsets_do_not_yield_garbage(self, tmp_path):
+        import struct
+
+        from shootr_analyzer.raf import extract_jpeg
+
+        p = self._raf(tmp_path)
+        blob = bytearray(p.read_bytes())
+        struct.pack_into(">II", blob, 0x54, 0x6C, 4)  # points at non-SOI
+        blob[0x6C:0x70] = b"nope"
+        p.write_bytes(bytes(blob))
+        assert extract_jpeg(p) is None  # SOI check refuses it

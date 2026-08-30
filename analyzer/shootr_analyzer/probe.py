@@ -52,6 +52,14 @@ def probe(path: Path) -> dict[str, Any] | None:
     out["width"] = _i(tags, "EXIF ExifImageWidth") or _i(tags, "Image ImageWidth")
     out["height"] = (_i(tags, "EXIF ExifImageLength")
                      or _i(tags, "Image ImageLength"))
+    if path.suffix.lower() == ".raf":
+        # RAF Exif describes the embedded preview, not the frame — override
+        # with the CFA header's real size or the two analyzers disagree on
+        # every Fuji file (measured on X-T50/X-E5 samples).
+        from .raf import raw_dimensions
+
+        if dims := raw_dimensions(path):
+            out["width"], out["height"] = dims
     if not out.get("width") or not out.get("height"):
         if dims := _header_dimensions(path):
             out["width"], out["height"] = dims
@@ -72,11 +80,29 @@ def _header_dimensions(path: Path) -> tuple[int, int] | None:
 
 
 def _read_tags(path: Path) -> dict:
-    """TIFF-container RAWs (CR2/ARW/RAF/NEF/DNG/JPEG) parse directly; CR3 is
-    ISO-BMFF, so its embedded CMT1/CMT2 TIFF blocks are parsed separately and
-    merged (CMT1 = IFD0 'Image *' tags, CMT2 = ExifIFD → keys arrive as
-    'Image *' too, so remap the ones probe() expects under 'EXIF *')."""
+    """TIFF-container RAWs (CR2/ARW/NEF/DNG/JPEG) parse directly. Two
+    containers are not TIFF and need unwrapping first — measured, not
+    assumed (the RAF case was found by real Fuji samples returning nothing):
+
+    - **CR3** is ISO-BMFF: its embedded CMT1/CMT2 TIFF blocks are parsed
+      separately and merged (CMT1 = IFD0 'Image *' tags, CMT2 = ExifIFD →
+      keys arrive as 'Image *' too, so remap the ones probe() expects
+      under 'EXIF *').
+    - **RAF** is Fuji's own fixed-offset header: the embedded JPEG carries
+      the Exif segment, so slice it out and parse that.
+    """
     import io
+
+    if path.suffix.lower() == ".raf":
+        from .raf import camera_model, extract_jpeg
+
+        blob = extract_jpeg(path)
+        tags = exifread.process_file(io.BytesIO(blob), details=False) \
+            if blob else {}
+        if tags and "Image Model" not in tags:
+            if model := camera_model(path):
+                tags["Image Model"] = model  # header fallback
+        return tags
 
     if path.suffix.lower() == ".cr3":
         from .cr3 import extract_cmt
