@@ -123,6 +123,28 @@ From the 16×16 tile map: `sharpness_mean`, `sharpness_max`, and the distributio
 
 For **landscape** this metric becomes dominant and changes meaning entirely — see §4.3.
 
+> ⚠ **KNOWN FLAW (found 2026-08-30, unfixed): the absolute thresholds here are not
+> sound.** `FRAME_SHARPNESS_CURVE` and `MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS` (0.005) map
+> *absolute* Tenengrad values, but §03.1 states — correctly — that absolute Tenengrad is
+> content-dependent and only ratios are diagnostic. Measured: across five files all
+> sharp by eye, `sharpness_max` spans **615×**; a visibly sharp Fuji X-E5 frame scores
+> 0.00065 and is therefore labelled `motion_blur_or_shake` with sharpness 0. Not a
+> Sony/Fuji-only problem — within the one calibrated wedding the values span 1400×, 62
+> photos (1.39%) trip the floor, and the user kept 5 of them.
+>
+> The *within-frame* uses are fine (tile map for focus planes, eye sharpness normalized
+> against the frame's own sharpest tile) — those are ratios, as intended. Two candidate
+> normalizations were measured and **both rejected**: level-rescaling neither fixes
+> comparability nor preserves within-shoot ordering (ρ 0.60), and gradient-energy/variance
+> collapses the spread but is anti-correlated with focus (blur *raises* it). Evidence and
+> reproducer: `docs/benchmarks/2026-08-30-arw-raf-validation.md` §4.
+>
+> Recommended direction, pending a decision because it changes scoring semantics: score
+> frame sharpness by **percentile within the shoot / scene group** rather than against
+> global constants — ratio-based per §03.1, self-calibrating per camera and lighting, and
+> culling is already comparative. Requires re-validating against the 559-keeper set and
+> replacing the disaster floor with a per-shoot robust low percentile.
+
 ### 2.4 Composition — flags with evidence, never a score
 A learned "composition score" would be an opaque model overruling deliberate artistic
 choices — exactly what a photographer will refuse to trust. So: **detectors that state

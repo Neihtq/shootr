@@ -89,8 +89,10 @@ outcome and can be built now.
   false-rejects 68 → 30, survivors are honest expression-overlap cases.
   Promoted to `shootr.eye_refiner` and wired into the analyze job's finalize
   2026-08-30 — fresh shoots refine automatically; tool remains as CLI
-- ⚠ Validate against real RAWs: enhancement-off properties on CR3/ARW/RAF, eye-sharpness
-  accuracy, per-photo latency — the benchmark gate
+- ~~Validate against real RAWs~~ — CR3/CR2 on the wedding, ARW/RAF on public CC0
+  samples (2026-08-30): both analyzers agree on all five Sony/Fuji files after two
+  RAF fixes; no format-specific decode failure; latency parity. Eye-sharpness accuracy
+  on ARW/RAF still unmeasured (samples have no faces)
 
 ### Scoring (`04`)
 - ~~Evidence-record output: per-metric value/weight/contrib/evidence + `weights_hash` (§1)~~
@@ -387,6 +389,26 @@ swap in via `SHOOTR_HELPER`). Adoption remains a post-A/B user decision:
   picker + create-&-analyze; on non-Mac platforms web is the only surface
 - Then the ports are packaging + platform ingest (volume identity/offline
   semantics on NTFS/ext4, 02 §)
+
+---
+
+## ⚠ Open correctness issue — absolute sharpness thresholds (found 2026-08-30)
+
+`sharpness_max` is not comparable across cameras, exposures, or even within one
+shoot (615× spread across five sharp files; 1400× inside the wedding), yet
+`FRAME_SHARPNESS_CURVE` and `MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS` compare it to
+global constants. Live consequence in the user's own data: 62 wedding photos
+(1.39%) labelled `motion_blur_or_shake`, 5 of them frames the user kept. A
+visibly sharp Fuji sample scores 0.00065 → sharpness 0.
+
+Two obvious fixes measured and rejected (level-rescale: doesn't fix it and
+reorders shoots; gradient/variance: anti-correlated with focus). **Decision
+needed** — recommended direction is within-shoot percentile scoring, which is
+what 03 §3.1's own "only ratios are diagnostic" implies. Requires re-validation
+against the 559-keeper ground truth.
+
+Evidence: `docs/benchmarks/2026-08-30-arw-raf-validation.md` §4 · reproducer
+`docs/benchmarks/2026-08-30-sharpness-repro/` · design note in 04 §2.3.
 
 ---
 
