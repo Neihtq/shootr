@@ -91,6 +91,14 @@ different shortcuts for the same task is worse than one UI.
 
 ---
 
+## 4a. Style screens
+
+Same contract as the web client — see §08.7a. Native adds keyboard operation
+consistent with §5's bindings; it must not diverge in wording or in which
+guardrails are surfaced.
+
+---
+
 ## 5. Risks
 
 | Risk | Mitigation |

@@ -173,6 +173,50 @@ preset and drop the model. That comparison is cheap and worth running first.
 
 ---
 
+## 7a. The UI surface (both clients, design 2026-09-07)
+
+The engine side is built and measured (§7); this is what the clients must render. Same
+rule as everywhere else: **clients render, they never compute** (§10.1) — no client-side
+arithmetic on predictions, no client-side confidence maths.
+
+**Screen 1 — Look families.** A list from `GET /api/style/families`: each family's photo
+count, its trait label ("+Highlights +Exposure +Vibrance"), thumbnails of its sample
+photos (via the existing thumbnail endpoint), and its median edit. This is how the user
+recognizes their own looks. Read-only; families are discovered, not editable.
+
+**Screen 2 — Predict for a shoot.** `POST /api/shoots/{id}/style/predict` is a *preview*
+and must be presented as one: nothing is written until the user asks. Per photo, show
+the predicted parameters, the confidence, and — the point of choosing k-NN — the
+**neighbour photos the blend came from**, as thumbnails. "Edited like these five" is the
+explanation; a bare number is not. The family is auto-suggested and overridable.
+
+**Abstentions are first-class, never blanks.** A photo below the confidence gate shows
+"no confident prediction — needs manual edit" with the reason from the engine
+(`low_confidence`, `no_similar_history`, `family_too_small`, `not_analyzed`), exactly as
+§5's null-vs-zero rule works for scores. An empty parameter list must never read as
+"no changes needed".
+
+**Per-parameter opt-out** (§6, engine-side work still to do): a toggle per parameter,
+persisted per user, excluded from the write. Ship with `ColorGradeMidtoneHue` off by
+default — measured: the family median beats k-NN on it
+(`docs/benchmarks/2026-08-30-style-knn-eval.md`).
+
+**Write dialog.** Same shape as the selects export dialog (§11.7): state the counts
+before writing — how many will be written, how many abstain, how many are conflicts —
+and require explicit confirmation. Conflicts (a sidecar already holding the user's own
+develop settings) are **reported and skipped with no override control at all**; there is
+no confirm checkbox to add, because the engine has no override parameter. Say plainly
+that these were left untouched. After writing, repeat the §07.3.1 "Read Metadata from
+File" caveat.
+
+**Never imply we transfer local adjustments.** Brushes, gradients and AI masks are out
+of scope permanently (§1); the UI states that where a user would reasonably expect them.
+
+Both clients ship this (web first, per the standing rule that a UI feature lands in
+both); the keyboard path in the native client follows §12's existing bindings.
+
+---
+
 ## 8. Open questions
 
 - **Adobe's baseline rendering** is proprietary; "as-shot baseline" is therefore

@@ -188,6 +188,14 @@ which matters once style prediction (§08) is being reviewed.
 
 ---
 
+## 8a. Style screens
+
+Specified in §08.7a (families list, prediction preview with neighbour
+thumbnails, abstention reasons, per-parameter opt-outs, write dialog). Web ships
+first; the native client mirrors it.
+
+---
+
 ## 9. Open questions
 
 - **Thumbnail prefetch strategy** for fast `J`/`K` scrubbing — likely prefetch ±5 frames at
