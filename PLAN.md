@@ -299,7 +299,8 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
   distance, no scipy) + trait labels; family thumbnails = UI work, pending
 - ~~k-NN predictor~~ — family-filtered softmax blend, confidence first-class (§4)
 - ~~Guardrails~~ — confidence gate (abstain), clamp to family range, PV written with
-  every prediction; highlight-clip sanity check + per-parameter opt-out (UI) pending;
+  every prediction, **highlight-clip sanity check** (no positive exposure onto a frame
+  already clipping >2%, reported via `Prediction.damped` and rendered in both clients);
   never-overwrite is `DevelopConflict` with deliberately no override flag
 - ~~Baseline comparison~~ (§7) — run honest (group-excluded); median wins only
   ColorGradeMidtoneHue → first opt-out candidate
@@ -309,8 +310,14 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
 - ~~API endpoints~~ — `/api/style/families` (traits + sample thumbnails + median),
   `/predict` (read-only, neighbors named, auto-suggested family), `/export-develop`
   (abstentions write nothing; user-edited sidecars = reported conflicts, no
-  override). Client UI (family picker, prediction preview, per-param opt-outs,
-  highlight-clip check) — not started, both clients
+  override)
+- ~~Client UI, both clients~~ (2026-09-07, spec written first as 08 §7a): families with
+  traits + sample thumbnails, prediction preview showing the neighbour photos each blend
+  came from, abstentions as first-class rows, write dialog with counts and no conflict
+  override, guardrail reasons rendered. Per-parameter opt-out is a **display filter
+  only** and says so in both clients — the export endpoint takes no parameter list
+- Server-side per-parameter opt-out — the honest version of the toggles above: needs a
+  preference store and a param filter on `export-develop`
 - JPEG+RAW pair validation (trends/direction, not pixel equality) — needs exported pairs
 - Gradient-boosted trees only if k-NN measurably underperforms — not currently indicated
 
