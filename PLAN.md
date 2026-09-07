@@ -321,8 +321,11 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
   came from, abstentions as first-class rows, write dialog with counts and no conflict
   override, guardrail reasons rendered. Per-parameter opt-out is a **display filter
   only** and says so in both clients — the export endpoint takes no parameter list
-- Server-side per-parameter opt-out — the honest version of the toggles above: needs a
-  preference store and a param filter on `export-develop`
+- ~~Server-side per-parameter opt-out~~ (2026-09-07) — `preference` table +
+  `GET`/`PUT /api/style/preferences`, honoured by both predict and export-develop;
+  excluded params reported with their predicted value, not dropped silently. Both
+  clients rewired off local storage, obsolete 'still written' copy removed.
+  `ColorGradeMidtoneHue` excluded by default via migration 5 (the measured case)
 - JPEG+RAW pair validation (trends/direction, not pixel equality) — needs exported pairs
 - Gradient-boosted trees only if k-NN measurably underperforms — not currently indicated
 
