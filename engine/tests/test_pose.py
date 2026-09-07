@@ -105,3 +105,19 @@ class TestLimbCut:
 
     def test_no_poses_is_no_flag(self):
         assert limb_cut_at_joint([]) is None
+
+    def test_extrapolated_out_of_frame_joint_does_not_flag(self):
+        """MediaPipe guesses where occluded limbs would be, past the frame
+        bounds (19% of its joints, measured). A joint OUTSIDE the frame means
+        the limb left frame before it — the between-joints case that is normal
+        framing, not a cut at the joint (04 §2.4)."""
+        j = standing()
+        j["left_leg_joint"] = [0.79, -0.165, 0.9]   # confidently guessed knee
+        j["left_foot_joint"] = [0.78, -0.362, 0.9]
+        assert limb_cut_at_joint([{"joints": j}]) is None
+
+    def test_joint_just_inside_the_edge_still_flags(self):
+        """The in-frame requirement must not swallow the real case."""
+        j = standing()
+        j["right_hand_joint"] = [0.995, 0.5, 0.9]
+        assert limb_cut_at_joint([{"joints": j}]) == "right_hand_joint"

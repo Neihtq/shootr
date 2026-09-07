@@ -150,10 +150,13 @@ outcome and can be built now.
   confidence filter, and **abstention** when hips/shoulders are missing or coverage is
   sparse; wired into `group_shoot` (portrait profile only, per 05 §4) and persisted as
   raw joints on `analysis.pose` (migration 3)
-- Pose in the **Python analyzer** — the Swift path emits `pose`, the cross-platform one
-  does not yet, so the cutover would lose pose grouping and limb-cut flags. Needs a
-  skeleton mapped onto Vision's joint names (design 13 lists ViTPose-L; MediaPipe Pose
-  is the cheap interim)
+- ~~Pose in the **Python analyzer**~~ — `analyzer/shootr_analyzer/pose.py` (2026-09-07):
+  MediaPipe Pose heavy, landmarks renamed onto Vision's joint names so the engine
+  consumes either analyzer unchanged; model pinned in the registry as tier `floor`.
+  **Measured trade-off** (`docs/benchmarks/2026-09-07-pose-vision-vs-mediapipe.md`):
+  Vision finds ~2× the bodies, MediaPipe yields more usable vectors (completer
+  skeletons) — so the cutover changes pose's character rather than preserving it, and
+  ViTPose-L (multi-person + complete) remains the accuracy target
 
 ### Culling (`06`)
 - ~~Three-state proposal (pick/alt/reject), rejects write nothing by default (§1)~~

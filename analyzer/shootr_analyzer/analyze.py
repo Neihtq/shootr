@@ -73,13 +73,22 @@ def analyze(path: Path, scale: float = 0.5,
     timing["embedding"] = _ms(t)
 
     t = time.monotonic()
+    from .pose import detect_pose
     from .saliency import attention_bbox
 
     saliency_box = attention_bbox(decoded)
     timing["saliency"] = _ms(t)
 
+    # Body pose: feeds pose grouping (05 §4) and the limb-cut flag (04 §2.4).
+    # Raw joints only — normalization is the engine's job, so both analyzers
+    # agree on measurements rather than on derived vectors.
+    t = time.monotonic()
+    poses = detect_pose(decoded.model_rgb())
+    timing["pose"] = _ms(t)
+
     # "vision" for rough Swift comparability in the A/B timing report.
-    timing["vision"] = timing["faces"] + timing["embedding"] + timing["saliency"]
+    timing["vision"] = (timing["faces"] + timing["embedding"]
+                        + timing["saliency"] + timing["pose"])
 
     from .cli import engine_version
 
@@ -92,6 +101,7 @@ def analyze(path: Path, scale: float = 0.5,
         "frame": frame,
         "saliency": {"attention_bbox": saliency_box} if saliency_box else None,
         "faces": faces,
+        "pose": poses,
         "embedding": embedding,
         "embedding_dim": embedding_dim,
         "timing_ms": timing,

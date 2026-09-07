@@ -89,6 +89,21 @@ REGISTRY: list[ModelSpec] = [
                "ff2bb731874b0bcc2fe6544e0bc9ff",
         filename="face_landmarker.task",
     ),
+    # -- Body pose (MediaPipe task bundle) ------------------------------------
+    # Interim floor per design 13 §2.1, which names ViTPose-L as the
+    # accuracy-first target: MediaPipe Pose needs no new model tier (the blink
+    # refiner already uses this task API) and emits exactly the joints the
+    # pose vector consumes. Heavy variant — accuracy-first, and pose is one
+    # extra inference, not the throughput bottleneck. Versioned artifact,
+    # hash verified 2026-09-07.
+    ModelSpec(
+        "pose", "mediapipe_pose_landmarker_heavy", "floor",
+        url="https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
+            "pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task",
+        sha256="64437af838a65d18e5ba7a0d39b465540069bc8aae8308de3e318aad31fcbc7b",
+        filename="pose_landmarker_heavy.task",
+    ),
+
     # -- Scene embedding -----------------------------------------------------
     # onnx-community exports of Meta's DINOv2-with-registers, pinned to the
     # repo commit (immutable ref); hashes verified 2026-08-20. ViT-L/14 is

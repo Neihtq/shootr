@@ -127,6 +127,15 @@ def limb_cut_at_joint(poses: list[dict]) -> str | None:
             if not p:
                 continue
             x, y = p[0], p[1]
+            # The joint must be INSIDE the frame and near an edge. A joint
+            # positioned outside is not "cut at the joint" — the limb left
+            # frame somewhere before it, which is the between-joints case the
+            # design calls normal framing (04 §2.4). This also makes the rule
+            # analyzer-independent: MediaPipe extrapolates occluded limbs past
+            # the frame bounds (measured: 19% of its joints), and without this
+            # check a guessed knee at y = −0.14 would read as a cut knee.
+            if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                continue
             if (x <= EDGE_EPSILON or x >= 1 - EDGE_EPSILON
                     or y <= EDGE_EPSILON or y >= 1 - EDGE_EPSILON):
                 return name
