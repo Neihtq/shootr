@@ -164,8 +164,7 @@ outcome and can be built now.
   others' work and requeues only the unreported. Sized on real CR3s (M5 Pro):
   1.47 s/photo → 0.47 at the default 4 workers (10k ≈ 1.3 h); 8 workers reach
   0.28 s/photo at 65% efficiency. `SHOOTR_WORKERS` overrides
-- Progress: rolling 60 s rate + ETA + SSE stream — lands with the API (`10`);
-  counts/failed already queryable via `jobs.progress`
+- ~~Progress: rolling 60 s rate + ETA + SSE stream~~ — shipped with the API (`10`)
 - ~~Helper hang timeout~~ — already shipped as the helper-layer stall watchdog
   (`SHOOTR_STALL_TIMEOUT`, default 120 s per silent batch, SIGKILL escalation);
   per-worker under the pool, verified by the stall-gate test
@@ -290,9 +289,6 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
   highlight-clip check) — not started, both clients
 - JPEG+RAW pair validation (trends/direction, not pixel equality) — needs exported pairs
 - Gradient-boosted trees only if k-NN measurably underperforms — not currently indicated
-- XMP `crs:` writer via the `07 §1` Rule-2 protocol; `ProcessVersion` discipline
-- JPEG+RAW pair validation (trends/direction, not pixel equality)
-- Gradient-boosted trees only if k-NN measurably underperforms
 
 ## M4 — Native client (SwiftUI) — pulled forward; core built 2026-08
 
@@ -343,8 +339,9 @@ ViTPose-L, BiRefNet subject segmentation (retires the saliency "honest loss").
 Sharpness stays Tenengrad — evidence rule outranks benchmarks (13 §1.5, §2.1).
 
 Arriving early on their own merits (accuracy, not portability):
-- Blink via MediaPipe blendshapes, validated against hand-labelled frames
-  (03 §5 — was already the plan; it's also a canonical-stack component)
+- ~~Blink via MediaPipe blendshapes, validated against hand-labelled frames~~ —
+  landed 2026-08-29/30: `shootr.eye_refiner` in the analyze job, curves refit on
+  285 labelled faces, EAR abstains
 - ArcFace/SCRFD (InsightFace) when faceprint extraction lands — fixes 05 §5's
   stated Vision weaknesses on Mac too
 
@@ -376,9 +373,13 @@ swap in via `SHOOTR_HELPER`). Adoption remains a post-A/B user decision:
   needs its own set (0.35/0.45/0.18 → 225 groups, 95.5% boundary agreement,
   no over-merge); constants switch in the cutover commit
   (`docs/benchmarks/2026-08-21-dinov2-grouping-thresholds.md`)
-- Remaining adoption items: **ARW/RAF samples** (waiting on files), then the
-  cutover decision itself (engine_version bump + full re-analysis + threshold
-  constants + blendshapes curve becomes the live one)
+- Remaining adoption items: ~~ARW/RAF decode+probe~~ validated on public CC0 samples
+  2026-08-30 (two RAF bugs found and fixed); still unmeasured on those formats:
+  **eye-sharpness/face accuracy** (the samples contain no faces). Then the cutover
+  decision itself (engine_version bump + full re-analysis + threshold constants +
+  blendshapes curve becomes the live one) — and it should not ship before the
+  absolute-sharpness-threshold issue above is resolved, since the cutover makes
+  the cross-vendor stack canonical everywhere
 - Component-wise adoption after A/B + labelled frames; single `engine_version`
   cutover (`py-0.1.0+<registry-hash>`); eat the re-analysis while small
 - AdaFace IR-101 still unpinned (no official ONNX artifact) — ArcFace R50
