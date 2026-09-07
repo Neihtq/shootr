@@ -284,7 +284,12 @@ Full numbers + addendum: `docs/benchmarks/2026-08-29-first-cull-agreement.md`.
   frames tracked separately (asymmetric cost, `06 §7`)~~ — first event-profile numbers
   on the wedding: moment coverage 98.9%, pick recall 33%, false-reject 46.9%
   (near-duplicate substitution dominates), blink-reason false-rejects 68 → 20
-- Online adjustment from `user_override` entries
+- ~~Online adjustment from `user_override` entries~~ — `shootr.overrides` +
+  `GET /api/selections/{id}/overrides` (2026-09-07): promotions become labelled pairs
+  and feed the ordering-agreement metric; the only adaptable knob is `keep_n` breadth
+  (≥20 overrides required), and it is **suggested, never applied**. No weight fitting
+  from overrides — that was already measured at chance on 559 keepers (06 §7)
+- Client surface for the override report (both clients) — engine + endpoint only so far
 
 ## M3 — Style learning — core built + evaluated 2026-08-30
 

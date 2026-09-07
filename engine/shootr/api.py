@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import db, helper, jobs, pipeline, style, xmp
+from . import db, helper, jobs, overrides, pipeline, style, xmp
 from .ingest import (backfill_metadata, create_library as
                      ingest_create_library, propose_shoots, resolve_library,
                      scan)
@@ -841,6 +841,32 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
             return {"photo_id": body.photo_id,
                     "group_id": body.to_group_id,
                     "source_deleted": left == 0}
+        finally:
+            c.close()
+
+    @app.get("/api/selections/{selection_id}/overrides")
+    def selection_overrides(selection_id: int):
+        """What the user's corrections tell us (design 06 §7).
+
+        Reports only — a keep-rate suggestion is never applied. Silently
+        re-tuning someone's cull from a handful of clicks is the kind of
+        unexplained change this app exists not to make.
+        """
+        c = conn()
+        try:
+            r = overrides.report(c, selection_id)
+            return {
+                "overrides": r.overrides,
+                "promotions": r.promotions,
+                "demotions": r.demotions,
+                "labelled_pairs": len(r.pairs),
+                "ordering_agreement": r.ordering_agreement,
+                "engine_keep_rate": r.engine_keep_rate,
+                "user_keep_rate": r.user_keep_rate,
+                "suggested_keep_rate": r.suggested_keep_rate,
+                "profile": r.profile,
+                "note": r.note,
+            }
         finally:
             c.close()
 

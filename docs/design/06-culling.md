@@ -156,6 +156,23 @@ Two sources of ground truth, different quality:
 2. **`user_override`** — few but precise, directly on our proposals. Used for online
    adjustment.
 
+**Implemented 2026-09-07 (`shootr.overrides`), deliberately narrow.** Overrides do two
+things and no more:
+
+- **Measure.** Each promotion is a labelled pair — "this frame beat the one you picked,
+  in this group" — scored through the same pairwise check as the `lr_history` fit, on data
+  that is unambiguously about *our* output. Groups the user never corrected contribute
+  nothing: silence is not agreement.
+- **Adjust one number: `keep_n` breadth.** Not a weight fit. Weight fitting was measured
+  against 559 real keepers and landed at chance (§04.7 — within-group ordering among
+  technically-equal frames is under-determined at frame level), so a few dozen overrides
+  cannot succeed where thousands of keepers failed. Breadth is a single scalar with an
+  unambiguous signal, and it needs ≥ 20 overrides before anything is suggested.
+
+Suggestions are **reported, never applied** (`GET /api/selections/{id}/overrides`).
+Silently re-tuning a user's cull from a handful of clicks is the kind of unexplained
+change this design avoids everywhere else.
+
 Headline metric: **agreement rate with the user's own picks**, reported per profile. Also
 tracked, and more important than aggregate accuracy: **false-reject rate on frames the user
 promoted** — recommending a mediocre photo wastes a moment of review; discarding a great one
