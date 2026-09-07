@@ -62,8 +62,20 @@ class ExportPlan:
     new_sidecars: list[SidecarDiff] = field(default_factory=list)
     updates: list[SidecarDiff] = field(default_factory=list)
     conflicts: list[SidecarDiff] = field(default_factory=list)  # crs: present
-    skipped_dng: list[str] = field(default_factory=list)
+    # Files whose metadata lives inside them (see the suffix set below):
+    # a sidecar beside these is ignored, so we skip and say so.
+    skipped_embedded: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
+
+
+# Formats whose metadata belongs INSIDE the file, so a sidecar next to them is
+# ignored by Lightroom — writing one looks like success and does nothing. The
+# design stated this for DNG (07 §3.1); the same reasoning covers every
+# non-proprietary-RAW format, and a JPEG-only shoot would otherwise export
+# sidecars that silently never arrive.
+EMBEDDED_METADATA_SUFFIXES = frozenset({
+    ".dng", ".jpg", ".jpeg", ".heic", ".heif", ".tif", ".tiff", ".png",
+})
 
 
 STATE_RATING = {"pick": 3, "alt": 2}
@@ -89,10 +101,13 @@ def plan_export(entries: list[tuple[Path, str]]) -> ExportPlan:
     they write nothing by default (design 06 §1)."""
     plan = ExportPlan()
     for photo_path, state in entries:
-        if photo_path.suffix.lower() == ".dng":
-            # A .dng.xmp does nothing; embedding into the RAW is not a risk
-            # worth taking (design 07 §3.1). Warn and skip.
-            plan.skipped_dng.append(str(photo_path))
+        if photo_path.suffix.lower() in EMBEDDED_METADATA_SUFFIXES:
+            # A .dng.xmp / .jpg.xmp does nothing: these formats carry their
+            # metadata internally. Embedding into the user's file is not a
+            # risk worth taking for a convenience feature (design 07 §3.1),
+            # so warn and skip — the CSV list and the hardlink folder still
+            # deliver these picks.
+            plan.skipped_embedded.append(str(photo_path))
             continue
         new_rating = STATE_RATING.get(state)
         new_label = STATE_LABEL.get(state)

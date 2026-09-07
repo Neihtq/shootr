@@ -375,13 +375,13 @@ struct APIClient: Sendable {
         let newSidecars: Int
         let updates: Int
         let conflicts: [ExportConflict]
-        let skippedDng: [String]
+        let skippedEmbedded: [String]
         let unchanged: Int
         let backupDir: String
         enum CodingKeys: String, CodingKey {
             case updates, conflicts, unchanged
             case newSidecars = "new_sidecars"
-            case skippedDng = "skipped_dng"
+            case skippedEmbedded = "skipped_embedded"
             case backupDir = "backup_dir"
         }
     }
@@ -399,11 +399,11 @@ struct APIClient: Sendable {
     }
     struct ExportResult: Codable {
         let written: Int
-        let skippedDng: [String]
+        let skippedEmbedded: [String]
         let unchanged: Int
         enum CodingKeys: String, CodingKey {
             case written, unchanged
-            case skippedDng = "skipped_dng"
+            case skippedEmbedded = "skipped_embedded"
         }
     }
 

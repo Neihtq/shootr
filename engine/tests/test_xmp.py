@@ -77,7 +77,7 @@ class TestPlan:
         """A .dng.xmp is a no-op; never embed into the user's RAW
         (design 07 §3.1)."""
         plan = plan_export([(raw(lib, "IMG_1.DNG"), "pick")])
-        assert plan.skipped_dng == [str(lib / "IMG_1.DNG")]
+        assert plan.skipped_embedded == [str(lib / "IMG_1.DNG")]
         assert not plan.new_sidecars
 
     def test_existing_develop_settings_is_conflict(self, lib):
@@ -219,3 +219,23 @@ class TestDevelopWriter:
         assert 'crs:Dehaze="15"' in text
         backups = list((tmp_path / "bk").rglob("*.xmp"))
         assert len(backups) == 1
+
+
+def test_jpeg_and_tiff_are_skipped_like_dng(tmp_path):
+    """A sidecar beside a JPEG/HEIC/TIFF is ignored — those formats carry
+    metadata internally, so writing one looks like success and does nothing
+    (design 07 §3.1, generalized from DNG 2026-09-07). The CSV list and the
+    hardlink folder still deliver these picks."""
+    from shootr.xmp import plan_export
+
+    for name in ("A.jpg", "B.JPEG", "C.heic", "D.tif", "E.dng"):
+        (tmp_path / name).write_bytes(b"x")
+    (tmp_path / "F.CR3").write_bytes(b"x")
+    plan = plan_export([(tmp_path / n, "pick") for n in
+                        ("A.jpg", "B.JPEG", "C.heic", "D.tif", "E.dng",
+                         "F.CR3")])
+    assert len(plan.skipped_embedded) == 5
+    # Only the real RAW gets a sidecar planned.
+    assert len(plan.new_sidecars) == 1
+    assert plan.new_sidecars[0].path.endswith("F.xmp")
+    assert not list(tmp_path.glob("*.xmp"))  # dry run writes nothing

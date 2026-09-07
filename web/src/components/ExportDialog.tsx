@@ -49,9 +49,11 @@ export function ExportDialog({
                   — requires explicit confirmation
                 </li>
               )}
-              {p.skipped_dng.length > 0 && (
+              {p.skipped_embedded.length > 0 && (
                 <li className="text-neutral-400">
-                  ⓘ {p.skipped_dng.length} DNG files will be skipped (sidecar
+                  ⓘ {p.skipped_embedded.length} files will be skipped — DNG, JPEG, HEIC and
+                  TIFF keep metadata inside the file, so a sidecar beside them
+                  is ignored (sidecar
                   writeback unsupported)
                 </li>
               )}

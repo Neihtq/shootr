@@ -707,7 +707,7 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                      "new_rating": d.new_rating,
                      "has_develop_settings": True}
                     for d in plan.conflicts],
-                "skipped_dng": plan.skipped_dng,
+                "skipped_embedded": plan.skipped_embedded,
                 "unchanged": len(plan.unchanged),
                 "backup_dir": str(app.state.backup_dir),
             }
@@ -733,7 +733,7 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                     "UPDATE selection SET exported_at = datetime('now') "
                     "WHERE id = ?", (selection_id,))
             return {"written": len(written),
-                    "skipped_dng": plan.skipped_dng,
+                    "skipped_embedded": plan.skipped_embedded,
                     "unchanged": len(plan.unchanged)}
         finally:
             c.close()

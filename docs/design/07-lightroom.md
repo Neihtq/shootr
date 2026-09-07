@@ -109,6 +109,13 @@ must be declared unsupported for select-writeback. **M1 decision: warn and skip 
 writeback**; embedding into a user's RAW is not a risk worth taking for a convenience
 feature.
 
+**Generalized 2026-09-07:** the same reasoning covers every format that carries its
+metadata internally — JPEG, HEIC, TIFF, PNG — so `EMBEDDED_METADATA_SUFFIXES` skips all of
+them and the plan reports them as `skipped_embedded` (both clients name the formats). This
+matters because JPEG-only culling otherwise *appears* to export and silently delivers
+nothing. Those picks are still delivered by §3.2's CSV list and hardlink folder, which
+don't depend on sidecar semantics.
+
 ### 3.2 Collection list — the practical path
 Also emit a plain-text/CSV file list the user can drag into LrC, plus an optional
 `.lrcat`-independent "Selects" folder of **hardlinks** (not copies — no disk cost, no

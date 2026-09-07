@@ -175,7 +175,7 @@ export interface ExportPreview {
     new_rating: number | null;
     has_develop_settings: boolean;
   }[];
-  skipped_dng: string[];
+  skipped_embedded: string[];
   unchanged: number;
   backup_dir: string;
 }

@@ -63,9 +63,9 @@ struct ExportSheet: View {
                          text: "\(p.conflicts.count) existing sidecars WITH develop settings — requires explicit confirmation",
                          tint: Theme.bracket)
             }
-            if !p.skippedDng.isEmpty {
+            if !p.skippedEmbedded.isEmpty {
                 DiffLine(icon: "info.circle",
-                         text: "\(p.skippedDng.count) DNG files will be skipped (sidecar writeback unsupported)")
+                         text: "\(p.skippedEmbedded.count) files will be skipped — DNG, JPEG, HEIC and TIFF keep metadata inside the file, so a sidecar beside them is ignored")
             }
             if p.unchanged > 0 {
                 DiffLine(icon: "equal.circle", text: "\(p.unchanged) unchanged")
