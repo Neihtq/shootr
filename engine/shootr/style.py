@@ -25,7 +25,7 @@ import math
 import sqlite3
 import warnings
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -52,6 +52,13 @@ SOFTMAX_TAU = 0.05          # cosine-similarity temperature
 MIN_NEIGHBOR_SIM = 0.5      # below: the photo looks like nothing we know
 CONFIDENCE_GATE = 0.35
 
+# Highlight-clip sanity check (§6): a frame that already clips this fraction of
+# highlights cannot take a positive exposure push — the blown area only grows,
+# and unlike a dark frame there is nothing to recover. We cannot render Adobe's
+# pipeline to simulate the result, so the rule is deliberately blunt: refuse to
+# ADD exposure, never invent a reduction the neighbours did not support.
+CLIPPED_HI_LIMIT = 0.02
+
 
 @dataclass
 class StyleSample:
@@ -69,6 +76,9 @@ class Prediction:
     neighbor_ids: list[int]
     abstained: bool = False
     reason: str | None = None
+    # Guardrails that fired, so the UI can say what was changed and why
+    # (design 08 §6; scores/predictions carry evidence — README rule 5).
+    damped: dict[str, str] = field(default_factory=dict)
 
 
 def load_history(conn: sqlite3.Connection,
@@ -216,10 +226,15 @@ def suggest_family(embeddings: list[np.ndarray],
 
 def predict(embedding: np.ndarray, history: list[StyleSample],
             family: int, k: int = KNN_K, tau: float = SOFTMAX_TAU,
-            gate: float = CONFIDENCE_GATE) -> Prediction:
+            gate: float = CONFIDENCE_GATE,
+            clipped_hi: float | None = None) -> Prediction:
     """Softmax-weighted blend of the k most similar family members' deltas,
     clamped to the family's observed range. Abstains (writes nothing) when
     the neighbors are dissimilar or disagree (§6).
+
+    `clipped_hi` (the frame's measured blown-highlight fraction) enables the
+    §6 sanity check: an already-clipping frame never gets a positive exposure
+    push, and the damping is reported rather than applied silently.
     """
     fam = [s for s in history if s.family == family]
     if len(fam) < 3:
@@ -260,5 +275,13 @@ def predict(embedding: np.ndarray, history: list[StyleSample],
     if confidence < gate:
         return Prediction({}, confidence, [fam[i].photo_id for i in order],
                           abstained=True, reason="low_confidence")
+
+    damped: dict[str, str] = {}
+    if (clipped_hi is not None and clipped_hi > CLIPPED_HI_LIMIT
+            and params.get("Exposure2012", 0.0) > 0):
+        damped["Exposure2012"] = (
+            f"+{params['Exposure2012']:.2f} EV withheld: "
+            f"{clipped_hi:.1%} of highlights already clipped")
+        params["Exposure2012"] = 0.0
     return Prediction(params, confidence,
-                      [fam[i].photo_id for i in order])
+                      [fam[i].photo_id for i in order], damped=damped)

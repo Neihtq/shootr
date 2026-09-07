@@ -888,6 +888,14 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                 np.frombuffer(r["vec"], dtype=np.float32).astype(np.float64)
                 for r in rows}
 
+    def _clipped_hi(c, photo_ids):
+        """Measured blown-highlight fraction, for the §6 sanity check."""
+        rows = c.execute(
+            f"SELECT photo_id, json_extract(frame, '$.clipped_hi') AS hi "
+            f"FROM analysis WHERE photo_id IN "
+            f"({','.join('?' * len(photo_ids))})", photo_ids).fetchall()
+        return {r["photo_id"]: r["hi"] for r in rows if r["hi"] is not None}
+
     @app.post("/api/shoots/{shoot_id}/style/predict")
     def style_predict(shoot_id: int, body: StylePredictIn):
         """Read-only preview: per-photo params + confidence + the neighbor
@@ -914,18 +922,21 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
             if family is None:
                 family = style.suggest_family(list(embs.values()), samples)
             pv = _history_pv(samples)
+            clipped = _clipped_hi(c, ids)
             out = []
             for pid in ids:
                 if pid not in embs:
                     out.append({"photo_id": pid, "abstained": True,
                                 "reason": "not_analyzed"})
                     continue
-                pred = style.predict(embs[pid], samples, family)
+                pred = style.predict(embs[pid], samples, family,
+                                     clipped_hi=clipped.get(pid))
                 out.append({
                     "photo_id": pid, "abstained": pred.abstained,
                     "reason": pred.reason,
                     "confidence": round(pred.confidence, 3),
                     "params": pred.params,
+                    "damped": pred.damped,
                     "neighbor_photo_ids": pred.neighbor_ids,
                 })
             return {"family": family, "process_version": pv,
@@ -943,6 +954,7 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
             samples = _style_history(c)
             embs = _shoot_embeddings(c, shoot_id, body.photo_ids)
             pv = _history_pv(samples)
+            clipped = _clipped_hi(c, body.photo_ids)
             paths = {r["id"]: Path(r["root_path"]) / r["rel_path"]
                      for r in c.execute(
                          f"SELECT p.id, p.rel_path, l.root_path FROM photo p "
@@ -956,7 +968,8 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                     abstained.append({"photo_id": pid,
                                       "reason": "not_analyzed"})
                     continue
-                pred = style.predict(embs[pid], samples, body.family)
+                pred = style.predict(embs[pid], samples, body.family,
+                                     clipped_hi=clipped.get(pid))
                 if pred.abstained:
                     abstained.append({"photo_id": pid,
                                       "reason": pred.reason})

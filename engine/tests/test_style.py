@@ -94,3 +94,32 @@ def test_disagreeing_neighbors_lower_confidence(two_looks):
         s.deltas[EXPO] = (-1) ** i * 3.0
     disagreeing = predict(emb(99, a), two_looks, family=fam)
     assert disagreeing.confidence < agreeing.confidence
+
+
+def test_already_clipping_frame_never_gets_an_exposure_push(two_looks):
+    """§6 sanity check: adding exposure to a frame that already blows 2%+ of
+    its highlights only grows the blown area, and there is nothing to recover
+    there. Withheld, not silently applied — the reason rides along."""
+    cluster_families(two_looks)
+    a = np.zeros(DIM); a[0] = 1.0
+    fam = two_looks[0].family
+    clean = predict(emb(99, a), two_looks, family=fam, clipped_hi=0.001)
+    assert clean.params["Exposure2012"] > 0 and not clean.damped
+
+    clipped = predict(emb(99, a), two_looks, family=fam, clipped_hi=0.08)
+    assert clipped.params["Exposure2012"] == 0.0
+    assert "Exposure2012" in clipped.damped
+    assert "8.0% of highlights" in clipped.damped["Exposure2012"]
+    # Other parameters are untouched — one guard, one effect.
+    assert clipped.params["Contrast2012"] == clean.params["Contrast2012"]
+
+
+def test_negative_exposure_is_not_damped_on_a_clipping_frame():
+    """Pulling exposure DOWN on a clipping frame is the right move; the guard
+    must not block it (it only refuses to add)."""
+    a = np.zeros(DIM); a[0] = 1.0
+    samples = [sample(i, -0.8, 5.0, emb(i, a)) for i in range(10)]
+    for s in samples:
+        s.family = 0
+    pred = predict(emb(99, a), samples, family=0, clipped_hi=0.2)
+    assert pred.params["Exposure2012"] < 0 and not pred.damped
