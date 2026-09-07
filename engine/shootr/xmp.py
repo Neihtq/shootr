@@ -235,7 +235,8 @@ def _fmt_crs(value: float) -> str:
 
 
 def write_develop(xmp_path: Path, params: dict[str, float],
-                  process_version: str, backup_dir: Path) -> Path:
+                  process_version: str, backup_dir: Path,
+                  raw_version: str | None = None) -> Path:
     """Write predicted global develop params as crs: attributes.
 
     Same protocol as select writeback: read → refuse-if-user-edited →
@@ -254,8 +255,13 @@ def write_develop(xmp_path: Path, params: dict[str, float],
         text = MINIMAL_SIDECAR
     if "xmlns:crs=" not in text:
         text = _insert_attr(text, CRS_NS)
+    # Both stamps, per 07 §4: ProcessVersion decides how LrC interprets the
+    # numbers, and crs:Version records the Camera Raw version they came from.
+    # Taken from the user's own history — never invented.
     text = _insert_attr(
         text, f'crs:ProcessVersion="{process_version}"')
+    if raw_version:
+        text = _insert_attr(text, f'crs:Version="{raw_version}"')
     for name in sorted(params):
         text = _insert_attr(text, f'crs:{name}="{_fmt_crs(params[name])}"')
     _atomic_write(xmp_path, text)

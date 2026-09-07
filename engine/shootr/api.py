@@ -910,6 +910,10 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
         finally:
             c.close()
 
+    def _history_raw_version(samples) -> str | None:
+        vs = [s.raw_version for s in samples if s.raw_version]
+        return max(set(vs), key=vs.count) if vs else None
+
     def _history_pv(samples) -> str:
         """Predictions apply the history's process version (08 §6: refuse
         cross-PV application; the history is single-PV in practice)."""
@@ -1054,7 +1058,9 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                 target = xmp.sidecar_path_for(paths[pid])
                 try:
                     xmp.write_develop(target, pred.params, pv,
-                                      app.state.backup_dir)
+                                      app.state.backup_dir,
+                                      raw_version=_history_raw_version(
+                                          samples))
                     written.append(pid)
                 except xmp.DevelopConflict:
                     conflicts.append({"photo_id": pid,

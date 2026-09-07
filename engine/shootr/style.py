@@ -66,6 +66,7 @@ class StyleSample:
     deltas: np.ndarray          # aligned to TONAL_PARAMS, NaN = param absent
     embedding: np.ndarray       # L2-normalized scene embedding
     process_version: str | None
+    raw_version: str | None = None   # crs:Version (Camera Raw), 07 §4
     family: int = -1
 
 
@@ -109,7 +110,9 @@ def load_history(conn: sqlite3.Connection,
         samples.append(StyleSample(
             photo_id=row["photo_id"], deltas=deltas, embedding=vec / n,
             process_version=(str(dev["ProcessVersion"])
-                             if dev.get("ProcessVersion") else None)))
+                             if dev.get("ProcessVersion") else None),
+            raw_version=(str(dev["Version"]) if dev.get("Version")
+                         else None)))
     return samples
 
 

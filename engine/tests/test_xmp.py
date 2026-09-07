@@ -239,3 +239,21 @@ def test_jpeg_and_tiff_are_skipped_like_dng(tmp_path):
     assert len(plan.new_sidecars) == 1
     assert plan.new_sidecars[0].path.endswith("F.xmp")
     assert not list(tmp_path.glob("*.xmp"))  # dry run writes nothing
+
+
+def test_develop_write_stamps_both_versions(tmp_path):
+    """07 §4: ProcessVersion decides how LrC interprets the numbers, and
+    crs:Version records the Camera Raw version they were learned from. Both,
+    and both taken from the user's history rather than invented."""
+    from shootr.xmp import write_develop
+
+    p = tmp_path / "IMG_1.xmp"
+    write_develop(p, {"Dehaze": 12.0}, "15.4", tmp_path / "bk",
+                  raw_version="18.5")
+    text = p.read_text()
+    assert 'crs:ProcessVersion="15.4"' in text
+    assert 'crs:Version="18.5"' in text
+    # Absent history version → omitted, not faked with a default.
+    p2 = tmp_path / "IMG_2.xmp"
+    write_develop(p2, {"Dehaze": 12.0}, "15.4", tmp_path / "bk")
+    assert "crs:Version=" not in p2.read_text()

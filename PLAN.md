@@ -326,6 +326,11 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
   excluded params reported with their predicted value, not dropped silently. Both
   clients rewired off local storage, obsolete 'still written' copy removed.
   `ColorGradeMidtoneHue` excluded by default via migration 5 (the measured case)
+- ⚠ **End-to-end visual validation — awaiting the user's judgement.** Everything so far
+  is parameter-space evidence; nobody has looked at a predicted edit rendered by
+  Lightroom. 10 unedited frames (one per scene, confidence 0.73–0.87, family 2) written
+  to `~/Pictures/shootr-style-test/` as hardlink + sidecar, so the library is untouched.
+  Open question that only a human can answer: is this a usable starting point?
 - JPEG+RAW pair validation (trends/direction, not pixel equality) — needs exported pairs
 - Gradient-boosted trees only if k-NN measurably underperforms — not currently indicated
 
