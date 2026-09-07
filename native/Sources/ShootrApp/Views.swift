@@ -460,7 +460,9 @@ struct GroupReviewView: View {
                 model.showStyle = true
             }
             .font(Theme.caption)
-            .help("Look families and predicted develop settings (D)")
+            // Same label and same sentence as the web client's Style… button.
+            .help("Preview predicted develop settings for this shoot's picks "
+                  + "(D)")
             Button("Export…") {
                 model.showExport = true
             }
@@ -676,8 +678,9 @@ enum Shortcuts {
         Item("B", "eye crops", "full-res eyes of the primary face — blink check"),
         Item("E", "evidence panel", "per-metric scores behind the verdict"),
         Item("D", "style / develop",
-             "look families, predicted develop settings and the photos they "
-             + "were learned from — a preview; writes only on confirm"),
+             "look families and predicted develop settings for this shoot's "
+             + "picks, with the photos they were learned from — a preview; "
+             + "writes only on confirm"),
         Item("?", "this list"),
     ]
 

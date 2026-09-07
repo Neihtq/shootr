@@ -129,13 +129,16 @@ struct DiffLine: View {
     var tint: Color = Theme.inkSecondary
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 11))
                 .foregroundStyle(tint)
             Text(text)
                 .font(Theme.caption)
                 .foregroundStyle(Theme.inkSecondary)
+                // Wrap rather than truncate: these lines carry the counts
+                // and the caveats, and a clipped caveat is a missing one.
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

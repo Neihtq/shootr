@@ -213,6 +213,10 @@ export interface StylePrediction {
   reason: StyleAbstainReason | string | null;
   confidence?: number;
   params?: Record<string, number>;
+  /** Guardrails that changed a predicted value, param → the engine's reason
+   * (design 08 §6). Rendered, never silent: a withheld exposure push would
+   * otherwise appear as an unexplained number (README rule 5). */
+  damped?: Record<string, string>;
   /** The history photos the blend came from — the whole reason k-NN was
    * chosen over a trained model (design 08 §4). Present on
    * `low_confidence` too: "closest we had, still not close enough". */

@@ -314,6 +314,19 @@ function PredictionRow({
           </div>
         )}
 
+        {Object.keys(pred.damped ?? {}).length > 0 && (
+          // A guardrail fired (08 §6). The engine's sentence carries the
+          // number and the cause; showing the damped value alone would be an
+          // unexplained number.
+          <div className="mt-1 space-y-0.5">
+            {Object.entries(pred.damped ?? {}).map(([name, why]) => (
+              <div key={name} className="text-[10px] text-amber-200/90">
+                {paramLabel(name)}: {why}
+              </div>
+            ))}
+          </div>
+        )}
+
         {params.length > shownParams.length && shownParams.length > 0 && (
           <div className="mt-1 text-[10px] text-neutral-500">
             {params.length - shownParams.length} more predicted parameter

@@ -212,12 +212,18 @@ struct StylePrediction: Codable {
     let reason: String?
     let confidence: Double?
     let params: [String: Double]?
+    /// Guardrails that fired, per parameter: `{param: engine's sentence}`
+    /// (design 08 §6 — the highlight-clip check withholds a positive
+    /// exposure push). Rendered, never inferred: a parameter that was
+    /// silently changed to 0 would be exactly the opaque number rule 5
+    /// forbids.
+    let damped: [String: String]?
     /// The history photos the blend came from — the explanation for the
     /// numbers (design 08 §4). Present even for a low-confidence abstention.
     let neighborPhotoIds: [Int]?
 
     enum CodingKeys: String, CodingKey {
-        case abstained, reason, confidence, params
+        case abstained, reason, confidence, params, damped
         case photoId = "photo_id"
         case neighborPhotoIds = "neighbor_photo_ids"
     }
