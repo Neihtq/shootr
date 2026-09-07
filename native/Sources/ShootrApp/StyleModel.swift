@@ -2,12 +2,17 @@ import Foundation
 import Observation
 
 /// View state for the style screens (design 08 §7a). Holds fetched engine
-/// payloads, the cursor, and the display filters — and nothing else. There
-/// is no blending, no confidence maths, no clamping and no gate here: every
-/// one of those lives in the engine (rule 6). The only numbers this file
-/// produces are counts of engine verdicts, which the write dialog has to
-/// state, and they are counted the same way the web client counts them
+/// payloads and the cursor — and nothing else. There is no blending, no
+/// confidence maths, no clamping and no gate here: every one of those lives
+/// in the engine (rule 6). The only numbers this file produces are counts of
+/// engine verdicts, which the write dialog has to state, and they are counted
+/// the same way the web client counts them
 /// (`web/src/components/StylePredictPanel.tsx`).
+///
+/// The per-parameter opt-out is engine state too (design 08 §6/§7a): it is
+/// fetched, PUT, and re-read here, never held locally. It changes what lands
+/// in the user's files, so a client-local copy would let the two clients
+/// write different edits.
 @MainActor
 @Observable
 final class StyleModel {
@@ -40,34 +45,39 @@ final class StyleModel {
     var writeResult: StyleWriteResult?
     var writeErrorText: String?
 
-    // MARK: display filters (per-parameter, persisted)
-    //
-    // Deliberately not called an opt-out. The engine's export endpoint takes
-    // no parameter list, so a hidden parameter is still written; the copy
-    // says so in the preview and again in the write dialog. Same default and
-    // same storage key as the web client (`web/src/style.ts`), which stores
-    // it in localStorage — separate stores, one behaviour.
-    // `ColorGradeMidtoneHue` ships hidden because the family median
-    // measurably beats k-NN on it
-    // (docs/benchmarks/2026-08-30-style-knn-eval.md).
+    // MARK: per-parameter opt-out (engine state, design 08 §6/§7a)
 
-    private static let hiddenKey = "shootr.style.hiddenParams"
-    static let defaultHidden: Set<String> = ["ColorGradeMidtoneHue"]
+    /// What the engine says it can predict — the toggle list. Taken from the
+    /// engine rather than from the parameters a prediction happened to carry:
+    /// an excluded parameter is absent from `params`, so deriving the list
+    /// from predictions would make it impossible to switch back on.
+    var modelableParams: [String] = []
 
-    var hiddenParams: Set<String> {
-        didSet {
-            UserDefaults.standard.set(Array(hiddenParams).sorted(),
-                                      forKey: Self.hiddenKey)
-        }
-    }
+    /// The engine's stored exclusions. Only ever assigned from a GET or a PUT
+    /// response, so the checkboxes show stored state, not local intent.
+    var excludedParams: Set<String> = []
 
-    init() {
-        if let saved = UserDefaults.standard.array(
-            forKey: Self.hiddenKey) as? [String] {
-            hiddenParams = Set(saved)
-        } else {
-            hiddenParams = Self.defaultHidden
-        }
+    /// The engine answered the GET. The toggles are not drawn before that:
+    /// guessing a list here and letting the user click it would be guessing
+    /// about their files.
+    var prefsLoaded = false
+    /// A PUT is in flight — every checkbox is disabled until the engine has
+    /// stored the change and the re-predict has landed.
+    var savingPrefs = false
+    /// A REFUSED PUT only (`unknown_param`, or an unreachable engine on that
+    /// call). Nothing was stored when this is set.
+    var prefsFault: EngineFault?
+    var prefsErrorText: String?
+
+    /// Measured exclusion suggestions the user has not taken up: the engine's
+    /// stored list is authoritative, so these are proposed with their evidence
+    /// and applied only on a click. Same map, same reasons, same one-click
+    /// shape as the web client's `SUGGESTED_EXCLUSIONS`.
+    var suggestedExclusions: [String] {
+        StyleCopy.suggestedExclusions.keys
+            .filter { modelableParams.contains($0)
+                      && !excludedParams.contains($0) }
+            .sorted()
     }
 
     // MARK: derived views of engine data (counts of verdicts, nothing more)
@@ -90,39 +100,54 @@ final class StyleModel {
     /// preview order. Same set the web client sends.
     var writeIds: [Int] { predicted.map(\.photoId) }
 
-    /// The parameters the engine actually returned, in the shared display
-    /// order. Never a hardcoded list of what we expect: if the engine starts
-    /// predicting another slider it appears here instead of being silently
-    /// dropped from the preview.
-    var paramNames: [String] {
-        var names: Set<String> = []
+    /// Every parameter name the predictions carried, predicted or withheld,
+    /// in the engine's own order of appearance.
+    var returnedParamNames: [String] {
+        var seen: [String] = []
         for p in predictions {
-            if let params = p.params { names.formUnion(params.keys) }
+            for name in (p.params.map { StyleParams.ordered(Set($0.keys)) }
+                         ?? [])
+                + (p.excluded.map { StyleParams.ordered(Set($0.keys)) } ?? []) {
+                if !seen.contains(name) { seen.append(name) }
+            }
         }
-        return StyleParams.ordered(names)
+        return seen
     }
 
-    /// Parameters the user switched off that the engine will nevertheless
-    /// write — named in the write dialog rather than quietly dropped.
-    var hiddenPresentParams: [String] {
-        paramNames.filter { hiddenParams.contains($0) }
+    /// The rows in the parameter box: the engine's modelable list (which is
+    /// also the PUT allowlist, hence exactly what can be toggled), then
+    /// anything it returned that is somehow outside that list — shown
+    /// read-only rather than quietly missing from the panel.
+    var paramNames: [String] {
+        modelableParams
+            + returnedParamNames.filter { !modelableParams.contains($0) }
     }
 
-    func isHidden(_ param: String) -> Bool { hiddenParams.contains(param) }
-
-    func toggleHidden(_ param: String) {
-        if hiddenParams.contains(param) {
-            hiddenParams.remove(param)
-        } else {
-            hiddenParams.insert(param)
-        }
+    func isModelable(_ param: String) -> Bool {
+        modelableParams.contains(param)
     }
 
-    /// Engine parameters for one photo, in display order, split into the
-    /// ones shown and the count hidden by the filter.
-    func shownParams(_ params: [String: Double]) -> [(String, Double)] {
+    /// The exclusion the engine applied to the preview on screen, in the order
+    /// it reported. From the predict response rather than the locally-held set,
+    /// so the write dialog's promise comes from the same call as the numbers.
+    var excludedInPreview: [String] {
+        prediction?.excludedParams ?? excludedParams.sorted()
+    }
+
+    /// Previewed photos where a value was actually withheld. "You excluded a
+    /// parameter" and "it affected these photos" are different facts, and the
+    /// write dialog states both.
+    var withheldCount: Int {
+        predictions.count { !($0.excluded?.isEmpty ?? true) }
+    }
+
+    func isExcluded(_ param: String) -> Bool { excludedParams.contains(param) }
+
+    /// Engine parameters for one photo in display order. Ordering only — the
+    /// engine already removed the excluded ones from `params` and moved them,
+    /// with their predicted values, to `excluded`.
+    func orderedParams(_ params: [String: Double]) -> [(String, Double)] {
         StyleParams.ordered(Set(params.keys))
-            .filter { !hiddenParams.contains($0) }
             .compactMap { name in params[name].map { (name, $0) } }
     }
 
@@ -130,12 +155,75 @@ final class StyleModel {
 
     func load(shootId: Int) async {
         self.shootId = shootId
+        // Preferences first: they decide what the predictions contain.
+        await loadPreferences()
         await loadFamilies()
         // A 409 means there is no history at all; the predict call would
         // fail with the same fault, so don't fire it.
         if familiesFault?.code != "insufficient_history" {
             await predict()
         }
+    }
+
+    /// Reads the stored exclusions and the engine's modelable list. A failure
+    /// leaves `prefsLoaded` false and the toggles undrawn — the same as the web
+    /// client, which renders the box only once the GET has answered. The
+    /// preview and the write dialog still report the engine's own
+    /// `excluded_params`, so the user is never told the wrong thing about their
+    /// files; they are just not offered controls we cannot validate.
+    func loadPreferences() async {
+        do {
+            let prefs = try await api.stylePreferences()
+            modelableParams = prefs.modelableParams
+            excludedParams = Set(prefs.excludedParams)
+            prefsLoaded = true
+        } catch {
+            // Keep a list we already have: dropping it would pull the toggles
+            // out from under the message explaining why a change failed.
+            if modelableParams.isEmpty { prefsLoaded = false }
+        }
+    }
+
+    /// Flips one parameter and re-asks the engine. Excluding a parameter
+    /// changes the payload — the value moves out of `params` and into
+    /// `excluded` — so the predictions on screen are refetched rather than
+    /// re-filtered here.
+    func setExcluded(_ param: String, _ excluded: Bool) async {
+        guard !savingPrefs else { return }
+        guard excluded != excludedParams.contains(param) else { return }
+        var next = excludedParams
+        if excluded { next.insert(param) } else { next.remove(param) }
+        await putExcluded(next.sorted())
+    }
+
+    /// Accepting a measured suggestion — the same PUT any other checkbox
+    /// makes, just prefilled.
+    func acceptSuggestion(_ param: String) async {
+        await setExcluded(param, true)
+    }
+
+    private func putExcluded(_ next: [String]) async {
+        savingPrefs = true
+        defer { savingPrefs = false }
+        prefsFault = nil
+        prefsErrorText = nil
+        do {
+            excludedParams = Set(
+                try await api.setStylePreferences(excludedParams: next))
+        } catch let error as APIError {
+            // 400 `unknown_param` (or the engine gone): nothing was stored.
+            // Show its sentence and put the checkboxes back to stored truth.
+            prefsFault = fault(from: error)
+            prefsErrorText = error.description
+            await loadPreferences()
+            return
+        } catch {
+            prefsFault = nil
+            prefsErrorText = String(describing: error)
+            await loadPreferences()
+            return
+        }
+        await predict()
     }
 
     func loadFamilies() async {

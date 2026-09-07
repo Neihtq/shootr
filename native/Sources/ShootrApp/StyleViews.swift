@@ -57,13 +57,88 @@ enum StyleCopy {
     static let usedByPreview = "used by the preview below"
     static let medianHeading = "Median edit"
 
-    static let filterHeading =
-        "Parameters — display filter for this preview only"
-    static let filterCaveat =
-        "These toggles change what you see here. They do NOT change what "
-        + "gets written: the engine's write endpoint applies every predicted "
-        + "parameter and has no per-parameter switch yet (design 08 §6). "
-        + "The write dialog repeats this and names anything you switched off."
+    // The per-parameter opt-out lives in the engine (design 08 §6/§7a), so
+    // these sentences are statements about the user's files, not about this
+    // window. Same strings as web/src/components/StylePredictPanel.tsx, with
+    // "the web client" where that one says "the native client".
+    static let paramsHeading =
+        "Parameters — which ones Shootr is allowed to write"
+    static let paramsCaveat =
+        "Unchecked parameters are never written to your files. The engine "
+        + "stores this choice and applies it everywhere — this preview, the "
+        + "write, and the web client alike. Values it predicted for an "
+        + "excluded parameter are still shown below, struck through, so you "
+        + "can see what you turned down rather than losing sight of it."
+    static let paramsSaving = "Saving to the engine and re-predicting…"
+    static let notWrittenTag = "not written"
+
+    /// A parameter the engine returned but does not list as modelable: shown,
+    /// and shown as unswitchable, rather than missing from the panel.
+    static func nonModelableHelp(_ name: String) -> String {
+        "\(name) — the engine returned this but does not list it as "
+        + "modelable, so it cannot be excluded"
+    }
+
+    /// Engine error codes from the preferences endpoint → human copy. Mirrors
+    /// `prefErrorCopy` in `web/src/style.ts`.
+    static func prefErrorCopy(_ code: String?, _ message: String) -> String {
+        if code == "unknown_param" {
+            return "The engine does not model that parameter, so it cannot be "
+                + "excluded. Nothing was changed — reload the screen to pick "
+                + "up the engine's current parameter list."
+        }
+        return "The engine rejected the change (\(code ?? "error")): "
+            + "\(message). Nothing was changed."
+    }
+
+    /// Parameters we have a MEASURED reason to recommend excluding, with that
+    /// reason in the user's own terms. Surfaced as a suggestion, never applied
+    /// for them: the exclusion list lives on the server and changes what is
+    /// written to their files, so the client proposing it silently would be the
+    /// client making the decision (design 08 §7a, design 10 §1).
+    ///
+    /// k-NN beats the family median on 11 of 12 parameters and loses on this
+    /// one (`docs/benchmarks/2026-08-30-style-knn-eval.md`: MAE 0.336 vs 0.283
+    /// under leave-one-shot-group-out). Same map as the web client's
+    /// `SUGGESTED_EXCLUSIONS`.
+    static let suggestedExclusions: [String: String] = [
+        "ColorGradeMidtoneHue":
+            "Measured on your own edits: the family's median hue beats the "
+            + "per-photo prediction here (MAE 0.283 vs 0.336) — the only "
+            + "parameter of 12 where it does. Excluding it means Shootr "
+            + "leaves midtone hue to you.",
+    ]
+
+    static func suggestionTitle(_ name: String) -> String {
+        "Suggested: don't write \(StyleParams.label(name))."
+    }
+    static let suggestionUnchanged =
+        "Nothing has been changed — this parameter is currently being written."
+    static func suggestionButton(_ name: String) -> String {
+        "Exclude \(StyleParams.label(name))"
+    }
+
+    static let excludedRowHeading =
+        "excluded by you — predicted, not written:"
+
+    /// The preview's tally line. Counts of engine verdicts only — and the
+    /// exclusion count, because "how many you turned off" belongs next to
+    /// them.
+    static func counts(predicted: Int, abstaining: Int, previewed: Int,
+                       excluded: Int) -> String {
+        var s = "\(predicted) predicted · \(abstaining) abstaining · "
+            + "\(previewed) previewed"
+        if excluded > 0 {
+            s += " · " + plural(excluded, "parameter") + " you excluded"
+        }
+        return s
+    }
+
+    static func excludedChipHelp(_ name: String, _ value: Double) -> String {
+        "\(name) — you excluded this parameter; the engine predicted "
+        + StyleParams.format(name, value) + StyleParams.unit(name)
+        + " and will not write it"
+    }
 
     static let abstainBadge = "no confident prediction — needs manual edit"
     static let nothingWritten = "Nothing will be written for this photo."
@@ -137,17 +212,40 @@ enum StyleCopy {
         n == 1 ? "\(n) \(word)" : "\(n) \(plural ?? word + "s")"
     }
 
-    /// The write dialog's warning about the display filter — named
-    /// parameters and all, because "some of what you switched off is written
-    /// anyway" is not something to leave the user to discover.
-    static func hiddenStillWritten(_ hidden: [String]) -> String {
-        let names = hidden.map(StyleParams.label).joined(separator: ", ")
-        return plural(hidden.count, "parameter")
-            + " you switched off in the preview (\(names)) WILL still be "
-            + "written. The engine's write endpoint applies every predicted "
-            + "parameter and takes no per-parameter switch, so the toggles "
-            + "filter what you see, not what lands on disk. Engine-side "
-            + "opt-out is still to be built (design 08 §6)."
+    /// What the write leaves out, named — so the dialog states the whole of
+    /// what it is about to do, not just the part that lands. `withheld` is how
+    /// many previewed photos actually had a value taken out: the exclusion and
+    /// its effect are separate facts.
+    static func excludedNotWritten(_ excluded: [String],
+                                   withheld: Int) -> String {
+        let names = excluded.map(StyleParams.label).joined(separator: ", ")
+        let one = excluded.count == 1
+        var s = plural(excluded.count, "parameter") + " you excluded "
+            + "(\(names)) " + (one ? "is" : "are") + " not written. The engine "
+            + "leaves " + (one ? "it" : "them")
+            + " out of every sidecar on this run"
+        if withheld > 0 {
+            s += " — \(withheld) of these photos had a predicted value for "
+                + (one ? "it" : "one of them")
+                + ", shown struck through in the preview"
+        }
+        return s + ". Those sliders stay as they are in Lightroom, yours to "
+            + "set."
+    }
+
+    /// The engine's echo after the write — the scope confirmed, not assumed.
+    static func excludedLeftOut(_ excluded: [String]) -> String {
+        let names = excluded.map(StyleParams.label).joined(separator: ", ")
+        return "Left out, as you asked: \(names). No value for "
+            + (excluded.count == 1 ? "it" : "them")
+            + " was written to any of these files."
+    }
+
+    /// Every predicted parameter for a photo is excluded. Not an abstention:
+    /// the engine had numbers, and the user said no to all of them.
+    static func allExcluded(_ n: Int) -> String {
+        plural(n, "predicted parameter") + ", all of them ones you excluded — "
+        + "nothing from this prediction will be written."
     }
 }
 
@@ -451,7 +549,10 @@ struct StylePredictPanel: View {
                     Task { await model.predict() }
                 }
             }
-            if !model.paramNames.isEmpty { filterBox }
+            // Waits for the engine's list rather than guessing one: the
+            // togglable set IS `modelable_params`, and a click there writes to
+            // the user's files.
+            if model.prefsLoaded, !model.paramNames.isEmpty { paramsBox }
             if model.prediction != nil && model.predictions.isEmpty {
                 Text(StyleCopy.noPicks)
                     .font(Theme.caption)
@@ -462,8 +563,8 @@ struct StylePredictPanel: View {
                         id: \.element.photoId) { i, p in
                     StylePredictionRow(
                         prediction: p,
-                        shownParams: p.params.map(model.shownParams) ?? [],
-                        totalParams: p.params?.count ?? 0,
+                        params: p.params.map(model.orderedParams) ?? [],
+                        excluded: p.excluded.map(model.orderedParams) ?? [],
                         isCurrent: i == model.cursor)
                         .id(p.photoId)
                         .onTapGesture { model.cursor = i }
@@ -533,9 +634,11 @@ struct StylePredictPanel: View {
                 }
                 Spacer()
                 if model.prediction != nil {
-                    Text("\(model.predicted.count) predicted · "
-                         + "\(model.abstainingCount) abstaining · "
-                         + "\(model.predictions.count) previewed")
+                    Text(StyleCopy.counts(
+                        predicted: model.predicted.count,
+                        abstaining: model.abstainingCount,
+                        previewed: model.predictions.count,
+                        excluded: model.excludedParams.count))
                         .font(Theme.caption)
                         .foregroundStyle(Theme.inkSecondary)
                 }
@@ -543,52 +646,134 @@ struct StylePredictPanel: View {
         }
     }
 
-    /// Per-parameter toggles. Labelled for what they actually are: the
-    /// engine's write endpoint has no per-parameter switch, so calling these
-    /// an opt-out would be a lie about the user's files.
-    private var filterBox: some View {
+    /// The per-parameter opt-out. Each checkbox is a PUT to the engine and a
+    /// re-predict; unchecking one stops that parameter being written by either
+    /// client (design 08 §6/§7a).
+    private var paramsBox: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(StyleCopy.filterHeading)
+            Text(StyleCopy.paramsHeading)
                 .font(Theme.micro)
                 .textCase(.uppercase)
                 .foregroundStyle(Theme.inkMuted)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.warning)
-                Text(StyleCopy.filterCaveat)
-                    .font(Theme.micro)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(StyleCopy.paramsCaveat)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             FlowLayout(spacing: 10) {
                 ForEach(model.paramNames, id: \.self) { name in
-                    Toggle(isOn: Binding(
-                        get: { !model.isHidden(name) },
-                        set: { _ in model.toggleHidden(name) })) {
-                        Text(StyleParams.label(name))
-                            .font(Theme.micro)
-                            .foregroundStyle(Theme.inkSecondary)
-                    }
-                    .toggleStyle(.checkbox)
-                    .help(name)
+                    ParamToggle(model: model, name: name)
                 }
+            }
+
+            if model.savingPrefs {
+                Text(StyleCopy.paramsSaving)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+            }
+
+            // A refused PUT (400 `unknown_param`) or the engine gone on that
+            // call: its own sentence, and that nothing was stored.
+            if model.prefsFault != nil || model.prefsErrorText != nil {
+                Text(StyleCopy.prefErrorCopy(
+                    model.prefsFault?.code,
+                    model.prefsFault?.message
+                        ?? model.prefsErrorText ?? ""))
+                    .font(Theme.micro)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.surfaceRaised,
+                                in: RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5)
+                        .stroke(.red.opacity(0.5), lineWidth: 1))
+            }
+
+            ForEach(model.suggestedExclusions, id: \.self) { name in
+                suggestion(name)
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6))
     }
+
+    /// A measured suggestion, offered rather than applied: excluding a
+    /// parameter changes the user's files, so the reason is stated and the
+    /// click is theirs (design 08 §7a).
+    private func suggestion(_ name: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(StyleCopy.suggestionTitle(name) + " "
+                 + (StyleCopy.suggestedExclusions[name] ?? ""))
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(StyleCopy.suggestionUnchanged)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(StyleCopy.suggestionButton(name)) {
+                    Task { await model.acceptSuggestion(name) }
+                }
+                .font(Theme.micro)
+                .disabled(model.savingPrefs)
+                Spacer()
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surfaceRaised,
+                    in: RoundedRectangle(cornerRadius: 5))
+        .overlay(RoundedRectangle(cornerRadius: 5)
+            .stroke(Theme.alt.opacity(0.4), lineWidth: 1))
+    }
+}
+
+/// One parameter's checkbox: checked = written. Unchecking it PUTs the engine's
+/// exclusion list and re-predicts. A parameter the engine returned but does not
+/// list as modelable cannot be excluded (the PUT would 400), so it is shown
+/// disabled with that reason rather than left out of the panel.
+struct ParamToggle: View {
+    @Bindable var model: StyleModel
+    let name: String
+
+    var body: some View {
+        let off = model.isExcluded(name)
+        let togglable = model.isModelable(name)
+        Toggle(isOn: Binding(
+            get: { !off },
+            set: { on in Task { await model.setExcluded(name, !on) } })) {
+            HStack(spacing: 4) {
+                Text(StyleParams.label(name))
+                    .strikethrough(off, color: Theme.inkMuted)
+                    .foregroundStyle(off ? Theme.inkMuted
+                                     : Theme.inkSecondary)
+                if off {
+                    Text(StyleCopy.notWrittenTag)
+                        .foregroundStyle(Theme.inkMuted)
+                }
+            }
+            .font(Theme.micro)
+        }
+        .toggleStyle(.checkbox)
+        .disabled(!togglable || model.savingPrefs)
+        .opacity(togglable ? 1 : 0.6)
+        .help(togglable ? name : StyleCopy.nonModelableHelp(name))
+    }
 }
 
 struct StylePredictionRow: View {
     let prediction: StylePrediction
-    let shownParams: [(String, Double)]
-    let totalParams: Int
+    /// What will be written, in display order.
+    let params: [(String, Double)]
+    /// What was predicted and will not be written, with its value — the
+    /// engine's `excluded` map (design 08 §7a).
+    let excluded: [(String, Double)]
     let isCurrent: Bool
 
     private var neighbors: [Int] { prediction.neighborPhotoIds ?? [] }
-    private var hiddenCount: Int { totalParams - shownParams.count }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -630,25 +815,28 @@ struct StylePredictionRow: View {
                         .font(Theme.caption)
                         .foregroundStyle(Theme.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                } else if !shownParams.isEmpty {
-                    ParamChips(params: shownParams)
-                } else {
-                    // Predicted, but every parameter is hidden by the display
-                    // filter — say so, rather than showing an empty row that
-                    // reads as "no edit".
-                    Text(StyleCopy.plural(totalParams,
-                                          "predicted parameter")
-                         + ", all hidden by your display filter above.")
+                } else if !params.isEmpty {
+                    ParamChips(params: params)
+                } else if !excluded.isEmpty {
+                    // Predicted, but the user excluded every one of them —
+                    // said outright, rather than shown as an empty row that
+                    // reads as "no edit". The values themselves are below.
+                    Text(StyleCopy.allExcluded(excluded.count))
                         .font(Theme.micro)
                         .foregroundStyle(Theme.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if hiddenCount > 0, !shownParams.isEmpty {
-                    Text(StyleCopy.plural(hiddenCount,
-                                          "more predicted parameter")
-                         + " hidden by the display filter (still written).")
+                // Excluded by choice: the number the engine had, and the fact
+                // that it stays out of the file. Deliberately NOT warning-
+                // coloured — an abstention is the engine having nothing to
+                // say, this is the user's own decision being honoured.
+                if !excluded.isEmpty {
+                    Text(StyleCopy.excludedRowHeading)
                         .font(Theme.micro)
+                        .textCase(.uppercase)
                         .foregroundStyle(Theme.inkMuted)
+                    ParamChips(params: excluded, struck: true)
                 }
 
                 // Guardrails the engine applied (design 08 §6). A parameter
@@ -742,27 +930,21 @@ struct StyleWriteDialog: View {
                          + "\(n == 1 ? "it" : "them"). Edit "
                          + "\(n == 1 ? "it" : "those") by hand.")
             }
+            // What the write leaves out, named — in the same place the web
+            // dialog states it, right after the counts. The list comes from the
+            // predict response, so it is the engine's account of this write
+            // rather than our recollection of the checkboxes.
+            let excluded = model.excludedInPreview
+            if !excluded.isEmpty {
+                DiffLine(icon: "minus.circle",
+                         text: StyleCopy.excludedNotWritten(
+                            excluded, withheld: model.withheldCount))
+            }
             // Conflicts get no control at all: the engine has no override
             // parameter, so there is no checkbox to offer.
             DiffLine(icon: "exclamationmark.triangle",
                      text: StyleCopy.conflictsWarning, tint: Theme.bracket)
             DiffLine(icon: "info.circle", text: StyleCopy.writeScope)
-
-            let hidden = model.hiddenPresentParams
-            if !hidden.isEmpty {
-                // Honesty over convenience: the toggles filter the preview,
-                // and the endpoint takes no parameter list, so pretending the
-                // write honours them would be a lie about the user's files.
-                Text(StyleCopy.hiddenStillWritten(hidden))
-                    .font(Theme.micro)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(8)
-                .background(Theme.surfaceRaised,
-                            in: RoundedRectangle(cornerRadius: 5))
-                .overlay(RoundedRectangle(cornerRadius: 5)
-                    .stroke(Theme.warning.opacity(0.5), lineWidth: 1))
-            }
 
             if let error = model.writeErrorText {
                 Text("Failed: \(error)")
@@ -791,6 +973,15 @@ struct StyleWriteDialog: View {
             Text("Wrote \(StyleCopy.plural(r.written.count, "sidecar")).")
                 .font(Theme.body)
                 .foregroundStyle(Theme.ink)
+
+            // The engine reports back which exclusions it honoured; relayed so
+            // the write's scope is confirmed rather than assumed.
+            if !r.excludedParams.isEmpty {
+                Text(StyleCopy.excludedLeftOut(r.excludedParams))
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if !r.abstained.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
@@ -874,20 +1065,28 @@ struct StyleWriteDialog: View {
 
 /// Engine values as chips: Lightroom's label, then the signed value and its
 /// unit, monospaced. Same text the web client puts in its chips.
+///
+/// `struck` marks a value that exists but is not going into the file (an
+/// excluded parameter). The value stays legible on purpose — hiding it would
+/// turn "you told us not to write this" back into "we had nothing".
 struct ParamChips: View {
     let params: [(String, Double)]
+    var struck = false
 
     var body: some View {
         FlowLayout(spacing: 4) {
             ForEach(params, id: \.0) { name, value in
                 Text(StyleParams.chip(name, value))
                     .font(Theme.value)
-                    .foregroundStyle(Theme.inkSecondary)
+                    .strikethrough(struck, color: Theme.inkMuted)
+                    .foregroundStyle(struck ? Theme.inkMuted
+                                     : Theme.inkSecondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Theme.surfaceRaised,
                                 in: RoundedRectangle(cornerRadius: 3))
-                    .help(name)
+                    .help(struck ? StyleCopy.excludedChipHelp(name, value)
+                          : name)
             }
         }
     }

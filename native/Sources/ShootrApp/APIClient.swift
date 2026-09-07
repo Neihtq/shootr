@@ -201,6 +201,32 @@ struct StyleFamily: Codable, Identifiable {
     }
 }
 
+/// The per-parameter opt-out, which lives in the engine (design 08 §6/§7a).
+/// It decides what lands in the user's files, so it cannot be a client
+/// setting: web and native would then write different edits from the same
+/// click. `modelableParams` is the engine's own list of what it can predict —
+/// the only honest source for the toggle list, and the set the PUT validates
+/// against.
+struct StylePreferences: Codable {
+    let excludedParams: [String]
+    let modelableParams: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case excludedParams = "excluded_params"
+        case modelableParams = "modelable_params"
+    }
+}
+
+/// The PUT echo: what the engine now holds. Applied to the UI instead of the
+/// value we sent, so the toggles always show stored state.
+struct StyleExcludedParams: Codable {
+    let excludedParams: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case excludedParams = "excluded_params"
+    }
+}
+
 /// One photo's prediction. `abstained` is a first-class state, not an
 /// empty result: `params` nil/empty with `abstained == true` means "no
 /// confident prediction", never "no changes needed" (design 08 §7a).
@@ -218,12 +244,17 @@ struct StylePrediction: Codable {
     /// silently changed to 0 would be exactly the opaque number rule 5
     /// forbids.
     let damped: [String: String]?
+    /// Parameters the engine DID predict and will NOT write, because the user
+    /// excluded them: `{param: predicted value}` (design 08 §6). A different
+    /// statement from an abstention — there is a number, it is just not going
+    /// into the file — so it is rendered with its value, never dropped.
+    let excluded: [String: Double]?
     /// The history photos the blend came from — the explanation for the
     /// numbers (design 08 §4). Present even for a low-confidence abstention.
     let neighborPhotoIds: [Int]?
 
     enum CodingKeys: String, CodingKey {
-        case abstained, reason, confidence, params, damped
+        case abstained, reason, confidence, params, damped, excluded
         case photoId = "photo_id"
         case neighborPhotoIds = "neighbor_photo_ids"
     }
@@ -233,11 +264,16 @@ struct StylePredictResponse: Codable {
     /// The family actually used — the auto-suggestion when none was sent.
     let family: Int
     let processVersion: String
+    /// The opt-out the engine applied to THIS preview. Rendered in the write
+    /// dialog rather than the locally-held set, so what the dialog promises
+    /// comes from the same call the numbers came from.
+    let excludedParams: [String]
     let predictions: [StylePrediction]
 
     enum CodingKeys: String, CodingKey {
         case family, predictions
         case processVersion = "process_version"
+        case excludedParams = "excluded_params"
     }
 }
 
@@ -266,8 +302,16 @@ struct StyleWriteResult: Codable {
     let written: [Int]
     let abstained: [StyleAbstention]
     let conflicts: [StyleConflict]
+    /// The opt-out the engine applied to this write — reported so the result
+    /// says what was left out, not only what went in.
+    let excludedParams: [String]
     /// The engine's own sentence about the conflicts — shown verbatim.
     let note: String
+
+    enum CodingKeys: String, CodingKey {
+        case written, abstained, conflicts, note
+        case excludedParams = "excluded_params"
+    }
 }
 
 // MARK: - Client
@@ -557,6 +601,30 @@ struct APIClient: Sendable {
         try await request("GET", "api/style/families")
     }
 
+    /// The stored per-parameter opt-out plus the engine's modelable list.
+    func stylePreferences() async throws -> StylePreferences {
+        try await request("GET", "api/style/preferences")
+    }
+
+    struct StylePrefsBody: Codable {
+        let excludedParams: [String]
+        enum CodingKeys: String, CodingKey {
+            case excludedParams = "excluded_params"
+        }
+    }
+
+    /// Replaces the whole exclusion set (there is no per-name endpoint), and
+    /// returns what the engine stored. A name outside `modelable_params` is a
+    /// 400 `unknown_param` and nothing is stored.
+    func setStylePreferences(excludedParams: [String]) async throws
+        -> [String] {
+        let body = try JSONEncoder().encode(
+            StylePrefsBody(excludedParams: excludedParams))
+        let r: StyleExcludedParams = try await request(
+            "PUT", "api/style/preferences", body: body)
+        return r.excludedParams
+    }
+
     /// `family: nil` omits the key entirely so the engine auto-suggests from
     /// scene similarity; `photoIds: nil` defaults to the shoot's latest
     /// picks. Both defaults are the engine's — the client has no business
@@ -587,9 +655,11 @@ struct APIClient: Sendable {
         }
     }
 
-    /// Writes `crs:` develop attributes for the given photos. Note there is
-    /// no per-parameter argument and no conflict override — the endpoint
-    /// writes every predicted parameter and skips user-edited sidecars.
+    /// Writes `crs:` develop attributes for the given photos. The endpoint
+    /// takes no parameter list on purpose: it reads the stored opt-out itself
+    /// (`PUT /api/style/preferences`) and echoes it back, so both clients
+    /// write the same set. There is no conflict override — user-edited
+    /// sidecars are skipped and reported.
     func styleExportDevelop(shootId: Int, family: Int, photoIds: [Int])
         async throws -> StyleWriteResult {
         let body = try JSONEncoder().encode(
