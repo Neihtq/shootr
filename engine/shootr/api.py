@@ -78,6 +78,13 @@ class StyleExportIn(BaseModel):
     photo_ids: list[int]
 
 
+class StylePrefsIn(BaseModel):
+    # Parameters the user never wants written (design 08 §6). Server-side on
+    # purpose: it changes what lands in the user's files, so a client-local
+    # toggle would let web and native write different edits.
+    excluded_params: list[str]
+
+
 class SplitIn(BaseModel):
     at_photo_id: int
 
@@ -839,6 +846,44 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
 
     # -- style (design 08) ----------------------------------------------------
 
+    STYLE_PREF_KEY = "style.excluded_params"
+
+    def _excluded_params(c) -> frozenset[str]:
+        row = c.execute("SELECT value FROM preference WHERE key = ?",
+                        (STYLE_PREF_KEY,)).fetchone()
+        return frozenset(json.loads(row["value"])) if row else frozenset()
+
+    @app.get("/api/style/preferences")
+    def style_preferences():
+        c = conn()
+        try:
+            return {"excluded_params": sorted(_excluded_params(c)),
+                    "modelable_params": style.TONAL_PARAMS}
+        finally:
+            c.close()
+
+    @app.put("/api/style/preferences")
+    def set_style_preferences(body: StylePrefsIn):
+        unknown = [p for p in body.excluded_params
+                   if p not in style.TONAL_PARAMS]
+        if unknown:
+            raise error(400, "unknown_param",
+                        f"not modelable parameters: {unknown}",
+                        detail={"modelable_params": style.TONAL_PARAMS})
+        c = conn()
+        try:
+            with c:
+                c.execute(
+                    "INSERT INTO preference (key, value, updated_at) "
+                    "VALUES (?, ?, datetime('now')) ON CONFLICT(key) DO "
+                    "UPDATE SET value = excluded.value, "
+                    "updated_at = excluded.updated_at",
+                    (STYLE_PREF_KEY, json.dumps(sorted(
+                        set(body.excluded_params)))))
+            return {"excluded_params": sorted(set(body.excluded_params))}
+        finally:
+            c.close()
+
     def _history_pv(samples) -> str:
         """Predictions apply the history's process version (08 §6: refuse
         cross-PV application; the history is single-PV in practice)."""
@@ -923,6 +968,7 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                 family = style.suggest_family(list(embs.values()), samples)
             pv = _history_pv(samples)
             clipped = _clipped_hi(c, ids)
+            excluded = _excluded_params(c)
             out = []
             for pid in ids:
                 if pid not in embs:
@@ -930,16 +976,19 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                                 "reason": "not_analyzed"})
                     continue
                 pred = style.predict(embs[pid], samples, family,
-                                     clipped_hi=clipped.get(pid))
+                                     clipped_hi=clipped.get(pid),
+                                     excluded_params=excluded)
                 out.append({
                     "photo_id": pid, "abstained": pred.abstained,
                     "reason": pred.reason,
                     "confidence": round(pred.confidence, 3),
                     "params": pred.params,
                     "damped": pred.damped,
+                    "excluded": pred.excluded,
                     "neighbor_photo_ids": pred.neighbor_ids,
                 })
             return {"family": family, "process_version": pv,
+                    "excluded_params": sorted(excluded),
                     "predictions": out}
         finally:
             c.close()
@@ -955,6 +1004,7 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
             embs = _shoot_embeddings(c, shoot_id, body.photo_ids)
             pv = _history_pv(samples)
             clipped = _clipped_hi(c, body.photo_ids)
+            excluded = _excluded_params(c)
             paths = {r["id"]: Path(r["root_path"]) / r["rel_path"]
                      for r in c.execute(
                          f"SELECT p.id, p.rel_path, l.root_path FROM photo p "
@@ -969,7 +1019,8 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                                       "reason": "not_analyzed"})
                     continue
                 pred = style.predict(embs[pid], samples, body.family,
-                                     clipped_hi=clipped.get(pid))
+                                     clipped_hi=clipped.get(pid),
+                                     excluded_params=excluded)
                 if pred.abstained:
                     abstained.append({"photo_id": pid,
                                       "reason": pred.reason})
@@ -984,6 +1035,7 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                                       "path": str(target)})
             return {"written": written, "abstained": abstained,
                     "conflicts": conflicts,
+                    "excluded_params": sorted(excluded),
                     "note": ("conflicting sidecars carry the user's own "
                              "develop settings and were not touched")}
         finally:

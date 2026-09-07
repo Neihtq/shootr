@@ -201,7 +201,20 @@ _MIGRATION_3 = """
 ALTER TABLE analysis ADD COLUMN pose TEXT;
 """
 
-MIGRATIONS: list[str] = [_MIGRATION_1, _MIGRATION_2, _MIGRATION_3]
+# User preferences the ENGINE must honour, not UI chrome (design 08 §6's
+# per-parameter opt-out). It lives server-side deliberately: the opt-out
+# changes what gets written to the user's files, so a client-local toggle
+# would mean web and native writing different edits from the same click.
+_MIGRATION_4 = """
+CREATE TABLE preference (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+"""
+
+MIGRATIONS: list[str] = [_MIGRATION_1, _MIGRATION_2, _MIGRATION_3,
+                         _MIGRATION_4]
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:

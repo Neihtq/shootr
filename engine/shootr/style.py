@@ -79,6 +79,10 @@ class Prediction:
     # Guardrails that fired, so the UI can say what was changed and why
     # (design 08 §6; scores/predictions carry evidence — README rule 5).
     damped: dict[str, str] = field(default_factory=dict)
+    # Parameters the user opted out of: predicted, deliberately not written.
+    # Reported rather than dropped silently, so the UI can show "we had a
+    # value for this, you told us not to write it".
+    excluded: dict[str, float] = field(default_factory=dict)
 
 
 def load_history(conn: sqlite3.Connection,
@@ -227,7 +231,9 @@ def suggest_family(embeddings: list[np.ndarray],
 def predict(embedding: np.ndarray, history: list[StyleSample],
             family: int, k: int = KNN_K, tau: float = SOFTMAX_TAU,
             gate: float = CONFIDENCE_GATE,
-            clipped_hi: float | None = None) -> Prediction:
+            clipped_hi: float | None = None,
+            excluded_params: frozenset[str] | set[str] = frozenset()
+            ) -> Prediction:
     """Softmax-weighted blend of the k most similar family members' deltas,
     clamped to the family's observed range. Abstains (writes nothing) when
     the neighbors are dissimilar or disagree (§6).
@@ -235,6 +241,11 @@ def predict(embedding: np.ndarray, history: list[StyleSample],
     `clipped_hi` (the frame's measured blown-highlight fraction) enables the
     §6 sanity check: an already-clipping frame never gets a positive exposure
     push, and the damping is reported rather than applied silently.
+
+    `excluded_params` is the user's per-parameter opt-out (§6). Excluded
+    params are removed from `params` — so they are never written — and moved
+    to `excluded` with their predicted value, because "we had a number and
+    you told us not to use it" is different from "we had nothing".
     """
     fam = [s for s in history if s.family == family]
     if len(fam) < 3:
@@ -283,5 +294,7 @@ def predict(embedding: np.ndarray, history: list[StyleSample],
             f"+{params['Exposure2012']:.2f} EV withheld: "
             f"{clipped_hi:.1%} of highlights already clipped")
         params["Exposure2012"] = 0.0
+    excluded = {k: params.pop(k) for k in list(params) if k in excluded_params}
     return Prediction(params, confidence,
-                      [fam[i].photo_id for i in order], damped=damped)
+                      [fam[i].photo_id for i in order], damped=damped,
+                      excluded=excluded)

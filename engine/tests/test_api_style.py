@@ -112,3 +112,42 @@ def test_insufficient_history_is_a_409_not_a_guess(env):
     r = client.post("/api/shoots/1/style/predict", json={})
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "insufficient_history"
+
+
+def test_per_parameter_optout_is_honoured_on_write(env):
+    """08 §6's opt-out, server-side: an excluded parameter is reported with
+    its predicted value but never written. Server-side on purpose — the
+    opt-out changes the user's files, so a client-local toggle would let the
+    two clients write different edits from the same click."""
+    client, _, lib = env
+    prefs = client.get("/api/style/preferences").json()
+    assert "Exposure2012" in prefs["modelable_params"]
+    assert prefs["excluded_params"] == []
+
+    r = client.put("/api/style/preferences",
+                   json={"excluded_params": ["Exposure2012"]})
+    assert r.json()["excluded_params"] == ["Exposure2012"]
+
+    pred = client.post("/api/shoots/1/style/predict",
+                       json={"photo_ids": [13]}).json()
+    p = pred["predictions"][0]
+    assert "Exposure2012" not in p["params"]          # never written
+    assert p["excluded"]["Exposure2012"] == pytest.approx(0.5, abs=0.01)
+    assert pred["excluded_params"] == ["Exposure2012"]
+    # Other params survive.
+    assert "Contrast2012" in p["params"]
+
+    client.post("/api/shoots/1/style/export-develop",
+                json={"family": 0, "photo_ids": [13]})
+    text = (lib / "IMG_13.xmp").read_text()
+    assert "crs:Exposure2012" not in text
+    assert "crs:Contrast2012" in text
+
+
+def test_unknown_param_is_rejected_not_silently_stored(env):
+    client, _, _ = env
+    r = client.put("/api/style/preferences",
+                   json={"excluded_params": ["NotAParam"]})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "unknown_param"
+    assert client.get("/api/style/preferences").json()["excluded_params"] == []

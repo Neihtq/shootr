@@ -196,9 +196,13 @@ explanation; a bare number is not. The family is auto-suggested and overridable.
 §5's null-vs-zero rule works for scores. An empty parameter list must never read as
 "no changes needed".
 
-**Per-parameter opt-out** (§6, engine-side work still to do): a toggle per parameter,
-persisted per user, excluded from the write. Ship with `ColorGradeMidtoneHue` off by
-default — measured: the family median beats k-NN on it
+**Per-parameter opt-out** (§6) is **server-side** — `GET`/`PUT /api/style/preferences`,
+stored in the `preference` table — not a client toggle. It changes what gets written into
+the user's files, so a client-local switch would let web and native write different edits
+from the same click. Excluded params are reported per photo with their predicted value
+(`excluded`), because "we had a number and you told us not to write it" is a different
+statement from "we had nothing". Ship with `ColorGradeMidtoneHue` excluded by default —
+measured: the family median beats k-NN on it
 (`docs/benchmarks/2026-08-30-style-knn-eval.md`).
 
 **Write dialog.** Same shape as the selects export dialog (§11.7): state the counts
