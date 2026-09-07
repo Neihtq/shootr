@@ -8,6 +8,7 @@ exported selections are frozen; user overrides carry forward.
 from __future__ import annotations
 
 import json
+import statistics
 import sqlite3
 import struct
 from datetime import datetime, timezone, datetime as _dt
@@ -24,9 +25,12 @@ def _now() -> str:
 
 
 def _measurements_for(row: sqlite3.Row, faces: list[sqlite3.Row],
-                      in_bracket: bool) -> scoring.Measurements:
+                      in_bracket: bool,
+                      population: tuple[float, int] | None = None
+                      ) -> scoring.Measurements:
     frame = json.loads(row["frame"]) if row["frame"] else {}
     saliency = json.loads(row["saliency"]) if row["saliency"] else None
+    ref, pop_n = population or (None, None)
 
     face_ms = []
     face_dicts = []
@@ -50,6 +54,8 @@ def _measurements_for(row: sqlite3.Row, faces: list[sqlite3.Row],
             clipped_hi=frame.get("clipped_hi"),
             clipped_lo=frame.get("clipped_lo"),
             horizon_angle=frame.get("horizon_angle"),
+            sharpness_ref=ref,
+            population_n=pop_n,
         ),
         faces=face_ms,
         saliency_bbox=tuple(sal_bbox) if sal_bbox else None,
@@ -62,6 +68,31 @@ def _measurements_for(row: sqlite3.Row, faces: list[sqlite3.Row],
     return scoring.Measurements(
         frame=m.frame, faces=m.faces, saliency_bbox=m.saliency_bbox,
         composition_flags=detected, in_bracket=in_bracket)
+
+
+def sharpness_populations(conn: sqlite3.Connection, shoot_id: int
+                          ) -> dict[str | None, tuple[float, int]]:
+    """camera_model → (median sharpness_max, n) for one shoot.
+
+    Sharpness is scored as a ratio to this (design 04 §2.3): absolute
+    Tenengrad is not comparable across bodies or lighting. Keyed by camera
+    because a two-body wedding is two populations — the CR2 and CR3 bodies
+    in the reference shoot differ by ~2× on the same scenes, which would
+    otherwise read as one body being consistently softer.
+    """
+    by_camera: dict[str | None, list[float]] = {}
+    for r in conn.execute(
+            "SELECT p.camera_model AS cam, "
+            "json_extract(a.frame, '$.sharpness_max') AS sm "
+            "FROM photo p JOIN analysis a ON a.photo_id = p.id "
+            "WHERE p.shoot_id = ?", (shoot_id,)):
+        if r["sm"] is not None:
+            by_camera.setdefault(r["cam"], []).append(r["sm"])
+    out: dict[str | None, tuple[float, int]] = {}
+    for cam, vals in by_camera.items():
+        vals.sort()
+        out[cam] = (statistics.median(vals), len(vals))
+    return out
 
 
 def score_shoot(conn: sqlite3.Connection, shoot_id: int) -> int:
@@ -78,10 +109,12 @@ def score_shoot(conn: sqlite3.Connection, shoot_id: int) -> int:
             'WHERE g.shoot_id = ? AND g.is_bracket = 1', (shoot_id,))
     }
 
+    populations = sharpness_populations(conn, shoot_id)
+
     n = 0
     with conn:
         for row in conn.execute(
-            "SELECT p.id, a.frame, a.saliency FROM photo p "
+            "SELECT p.id, p.camera_model, a.frame, a.saliency FROM photo p "
             "JOIN analysis a ON a.photo_id = p.id WHERE p.shoot_id = ?",
             (shoot_id,),
         ).fetchall():
@@ -89,7 +122,8 @@ def score_shoot(conn: sqlite3.Connection, shoot_id: int) -> int:
                 "SELECT * FROM face WHERE photo_id = ? ORDER BY idx",
                 (row["id"],),
             ).fetchall()
-            m = _measurements_for(row, faces, row["id"] in bracket_ids)
+            m = _measurements_for(row, faces, row["id"] in bracket_ids,
+                                  populations.get(row["camera_model"]))
             rec = scoring.score(m, profile)
             conn.execute(
                 "INSERT OR REPLACE INTO score (photo_id, profile, total, "

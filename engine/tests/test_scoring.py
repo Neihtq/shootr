@@ -115,19 +115,65 @@ class TestEyeSemantics:
         f_missed = missed.components["eye_focus"]["value"]
         assert f_sharp == 1.0 and f_missed < 0.15
 
-    def test_soft_frame_routes_to_motion_blur_not_focus_miss(self):
-        # 0.002 is below the calibrated motion-blur floor (real sharp files
-        # measure ≥0.0075; see FRAME_SHARPNESS_CURVE calibration note).
+    def test_unusable_frame_routes_away_from_a_false_focus_miss(self):
+        """Far below its population (rel 0.025 < 0.03) → one honest verdict:
+        the frame has no usable detail, so eye_focus abstains instead of
+        reporting a focus miss it cannot see."""
         m = Measurements(
-            frame=FrameMeasurement(sharpness_max=0.002, sharpness_mean=0.001,
-                                   clipped_hi=0.0, clipped_lo=0.0),
+            frame=FrameMeasurement(sharpness_max=0.001, sharpness_mean=0.0005,
+                                   clipped_hi=0.0, clipped_lo=0.0,
+                                   sharpness_ref=0.04, population_n=500),
             faces=[face(sharp_l=0.1, sharp_r=0.1)],
         )
         rec = score(m, "portrait")
         assert rec.components["eye_focus"]["value"] is None
         assert rec.components["eye_focus"]["evidence"]["reason"] == \
-            "frame_soft_motion_blur"
+            "frame_no_usable_detail"
         assert rec.components["sharpness"]["value"] == 0.0
+
+    def test_dark_low_detail_scene_is_not_accused_of_blur(self):
+        """The first-dance case (design 04 §2.3): smoke, darkness, red light —
+        a keeper at rel 0.056. Low gradient energy is the SCENE, not shake, so
+        it scores low but is never branded unusable."""
+        m = Measurements(
+            frame=FrameMeasurement(sharpness_max=0.00224, sharpness_mean=0.001,
+                                   clipped_hi=0.0, clipped_lo=0.0,
+                                   sharpness_ref=0.04, population_n=4448),
+        )
+        sharp = score(m, "landscape").components["sharpness"]
+        assert sharp["value"] is not None and sharp["value"] > 0.0
+        assert "diagnosis" not in sharp["evidence"]
+        assert sharp["evidence"]["sharpness_rel"] == pytest.approx(0.056,
+                                                                  abs=0.001)
+
+    def test_without_a_population_it_scores_but_never_accuses(self):
+        """No reference → absolute curve (calibrated on one camera) for a
+        score, but no hard verdict: we cannot tell an unusable frame from an
+        uncalibrated camera. The evidence says which basis was used."""
+        m = Measurements(
+            frame=FrameMeasurement(sharpness_max=0.001, sharpness_mean=0.0005,
+                                   clipped_hi=0.0, clipped_lo=0.0),
+            faces=[face(sharp_l=0.1, sharp_r=0.1)],
+        )
+        rec = score(m, "portrait")
+        sharp = rec.components["sharpness"]
+        assert "diagnosis" not in sharp["evidence"]
+        assert sharp["evidence"]["basis"] == "absolute_no_population"
+        # eye_focus is judged on its own merits, not routed away.
+        assert rec.components["eye_focus"]["value"] is not None
+
+    def test_relative_basis_makes_two_cameras_comparable(self):
+        """The bug this fixes: identical frame quality on two bodies whose
+        absolute Tenengrad differs 10× must score the same."""
+        canon = Measurements(frame=FrameMeasurement(
+            sharpness_max=0.040, sharpness_mean=0.02,
+            sharpness_ref=0.040, population_n=100))
+        other = Measurements(frame=FrameMeasurement(
+            sharpness_max=0.400, sharpness_mean=0.2,
+            sharpness_ref=0.400, population_n=100))
+        a = score(canon, "landscape").components["sharpness"]["value"]
+        b = score(other, "landscape").components["sharpness"]["value"]
+        assert a == pytest.approx(b)
 
 
 class TestBracketAndEvidence:

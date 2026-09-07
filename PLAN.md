@@ -98,7 +98,11 @@ outcome and can be built now.
 - ~~Evidence-record output: per-metric value/weight/contrib/evidence + `weights_hash` (§1)~~
 - ~~Eye focus: max-of-eyes, piecewise cliff curve, soft-frame → motion-blur routing (§2.1)~~
 - ~~Eyes open: min-of-eyes, steep partial-blink band (§2.2)~~
-- ~~Overall sharpness from tile stats (§2.3)~~
+- ~~Overall sharpness from tile stats (§2.3)~~ — **made population-relative
+  2026-09-07** (`sharpness_basis` + `pipeline.sharpness_populations`): absolute
+  Tenengrad is not comparable across bodies/exposures/scenes. Wrongly-flagged
+  frames 62 → 4, keepers wrongly flagged 5 → 0, pick recall 33.1% → 34.3%
+  (`docs/benchmarks/2026-09-07-relative-sharpness.md`)
 - ~~Composition flags with individually visible penalties, never a learned score (§2.4)~~
 - ~~Face capture quality as low-weight cross-check (§2.5)~~
 - ~~Exposure metric with clipping penalties~~
@@ -390,26 +394,6 @@ swap in via `SHOOTR_HELPER`). Adoption remains a post-A/B user decision:
   picker + create-&-analyze; on non-Mac platforms web is the only surface
 - Then the ports are packaging + platform ingest (volume identity/offline
   semantics on NTFS/ext4, 02 §)
-
----
-
-## ⚠ Open correctness issue — absolute sharpness thresholds (found 2026-08-30)
-
-`sharpness_max` is not comparable across cameras, exposures, or even within one
-shoot (615× spread across five sharp files; 1400× inside the wedding), yet
-`FRAME_SHARPNESS_CURVE` and `MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS` compare it to
-global constants. Live consequence in the user's own data: 62 wedding photos
-(1.39%) labelled `motion_blur_or_shake`, 5 of them frames the user kept. A
-visibly sharp Fuji sample scores 0.00065 → sharpness 0.
-
-Two obvious fixes measured and rejected (level-rescale: doesn't fix it and
-reorders shoots; gradient/variance: anti-correlated with focus). **Decision
-needed** — recommended direction is within-shoot percentile scoring, which is
-what 03 §3.1's own "only ratios are diagnostic" implies. Requires re-validation
-against the 559-keeper ground truth.
-
-Evidence: `docs/benchmarks/2026-08-30-arw-raf-validation.md` §4 · reproducer
-`docs/benchmarks/2026-08-30-sharpness-repro/` · design note in 04 §2.3.
 
 ---
 

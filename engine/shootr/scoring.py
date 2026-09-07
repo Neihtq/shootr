@@ -49,6 +49,12 @@ class FrameMeasurement:
     clipped_lo: float | None = None
     horizon_angle: float | None = None
     exposure_bias: float | None = None
+    # Median `sharpness_max` of this photo's population (same shoot + camera
+    # body). Absolute Tenengrad is not comparable across cameras, exposures,
+    # or scenes, so sharpness is scored relative to this when it exists.
+    # None → no population → fall back to the absolute curves (design 04 §2.3).
+    sharpness_ref: float | None = None
+    population_n: int | None = None
 
 
 @dataclass(frozen=True)
@@ -106,7 +112,9 @@ def weights_hash(profile: str) -> str:
          "curves": {"eye": EYE_FOCUS_CURVE, "open": EYES_OPEN_CURVE,
                     "open_by_source": EYES_OPEN_CURVES,
                     "open_abstain": sorted(ABSTAIN_EYE_SOURCES),
-                    "frame": FRAME_SHARPNESS_CURVE}},
+                    "frame": FRAME_SHARPNESS_CURVE,
+                    "frame_rel": FRAME_SHARPNESS_REL_CURVE,
+                    "frame_rel_floor": MIN_FRAME_SHARPNESS_REL}},
         sort_keys=True,
     )
     return "ev1-" + hashlib.sha256(payload.encode()).hexdigest()[:8]
@@ -172,6 +180,35 @@ MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS = 0.005
 # ~0.005 unusable → ~0.04 (median of real sharp frames) solid → 0.12+ crisp.
 FRAME_SHARPNESS_CURVE = [(0.005, 0.0), (0.015, 0.4), (0.04, 0.75),
                          (0.12, 1.0)]
+
+# --- Relative sharpness (design 04 §2.3, 2026-09-07) -----------------------
+# The absolute curves above are only valid for the population they were fit
+# on. Measured: `sharpness_max` spans 615× across files that are all sharp by
+# eye, and 1400× inside a single shoot — a crisp Fuji frame scored 0.00065 and
+# was labelled motion blur. So when a reference is available, sharpness is
+# scored as a RATIO to the photo's own population (same shoot, same camera
+# body — a two-body wedding is two populations), which is what §03.1's "only
+# ratios are diagnostic" implies.
+#
+# The absolute constants remain the fallback for a photo with no population
+# (single-file scoring, tests): with nothing to compare against, the honest
+# move is the old behavior, not a guess.
+# Fit to the reference shoot's distribution (rel p5 = 0.31, p50 = 1.0,
+# p95 = 4.6), so the median frame lands near the 0.78 it scored under the
+# old absolute curve — this is a comparability fix, not a re-grading.
+FRAME_SHARPNESS_REL_CURVE = [(0.03, 0.0), (0.30, 0.4), (1.00, 0.78),
+                             (2.00, 1.0)]
+# Hard "unusable" verdict, deliberately extreme. Calibrated by LOOKING at the
+# frames (docs/benchmarks/2026-09-07-relative-sharpness.md): at rel < 0.03 sit
+# genuine accidents — an out-of-focus frame of the floor. Just above it sit
+# *deliberate* low-detail keepers: the first dance at rel 0.056 is smoke,
+# darkness and red uplight, sharp but with almost no high-frequency content.
+# Low gradient energy therefore does NOT imply blur, so the floor only
+# catches the extreme and the curve carries everything else smoothly.
+MIN_FRAME_SHARPNESS_REL = 0.03
+# Below this many population members the median is not a reference worth
+# trusting; fall back to absolute.
+MIN_POPULATION_FOR_REL = 12
 # Detector abstains beyond this |yaw| (radians): profile views have no
 # reliable eye signal — abstain, don't guess (design 04 §2.2).
 MAX_YAW_FOR_EYE_METRICS = 0.6
@@ -242,11 +279,11 @@ def _eye_focus(m: Measurements, face: FaceMeasurement | None) -> Component:
     measured = {k: v for k, v in sharps.items() if v is not None}
     if not measured:
         return Component(None, {"reason": "eyes_not_measured"})
-    fmax = m.frame.sharpness_max
-    if fmax is not None and fmax < MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS:
+    basis = sharpness_basis(m.frame)
+    if basis is not None and basis.relative and basis.value < basis.floor:
         # Route to motion blur (sharpness metric), don't report a focus miss.
-        return Component(None, {"reason": "frame_soft_motion_blur",
-                                "frame_sharpness_max": fmax})
+        return Component(None, {"reason": "frame_no_usable_detail",
+                                **basis.evidence})
     # max, not mean: the near eye in focus is correct technique at f/1.4;
     # averaging would penalize a properly focused photo (design 04 §2.1).
     best_eye = max(measured, key=measured.__getitem__)
@@ -275,17 +312,55 @@ def _eyes_open(face: FaceMeasurement | None) -> Component:
                       "eye_source": face.eye_source})
 
 
+@dataclass(frozen=True)
+class SharpnessBasis:
+    """How this frame's sharpness is being judged, and against what.
+
+    One place decides relative-vs-absolute so the score curve, the
+    motion-blur floor and the eye-focus guard can never disagree — three
+    call sites drifting apart is how a frame gets scored 0 by one rule and
+    fine by another.
+    """
+
+    value: float          # sharpness_max, or the ratio to the population
+    floor: float
+    curve: list[tuple[float, float]]
+    relative: bool
+    evidence: dict
+
+
+def sharpness_basis(frame: FrameMeasurement) -> SharpnessBasis | None:
+    if frame.sharpness_max is None:
+        return None
+    ref, n = frame.sharpness_ref, frame.population_n or 0
+    if ref and ref > 0 and n >= MIN_POPULATION_FOR_REL:
+        rel = frame.sharpness_max / ref
+        return SharpnessBasis(
+            value=rel, floor=MIN_FRAME_SHARPNESS_REL,
+            curve=FRAME_SHARPNESS_REL_CURVE, relative=True,
+            evidence={"sharpness_max": frame.sharpness_max,
+                      "sharpness_rel": round(rel, 3),
+                      "population_median": ref, "population_n": n})
+    return SharpnessBasis(
+        value=frame.sharpness_max, floor=MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS,
+        curve=FRAME_SHARPNESS_CURVE, relative=False,
+        evidence={"sharpness_max": frame.sharpness_max,
+                  "basis": "absolute_no_population"})
+
+
 def _sharpness(frame: FrameMeasurement) -> Component:
     if frame.sharpness_mean is None or frame.sharpness_max is None:
         return Component(None, {"reason": "not_measured"})
-    # Uniformly low → shake/motion blur; high variance → a sharp plane
-    # exists, which is a normal shallow-DoF photo (design 04 §2.3).
-    if frame.sharpness_max < MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS:
-        return Component(0.0, {"diagnosis": "motion_blur_or_shake",
-                               "sharpness_max": frame.sharpness_max})
-    value = _piecewise(frame.sharpness_max, FRAME_SHARPNESS_CURVE)
-    return Component(value, {"sharpness_max": frame.sharpness_max,
-                             "sharpness_mean": frame.sharpness_mean})
+    basis = sharpness_basis(frame)
+    # The hard verdict needs a population: without one we cannot tell an
+    # unusable frame from an uncalibrated camera, so we score but never
+    # accuse (design 04 §2.3, §5's abstain-don't-guess spirit).
+    if basis.relative and basis.value < basis.floor:
+        return Component(0.0, {"diagnosis": "no_usable_detail",
+                               **basis.evidence})
+    value = _piecewise(basis.value, basis.curve)
+    return Component(value, {"sharpness_mean": frame.sharpness_mean,
+                             **basis.evidence})
 
 
 # Landscape focus-plane logic (design 04 §4.3): not "is the subject sharp"
@@ -302,9 +377,10 @@ def _landscape_sharpness(frame: FrameMeasurement) -> Component:
     if not tiles or frame.sharpness_max is None:
         return _sharpness(frame)  # no map → fall back, never null a
         # measurable frame
-    if frame.sharpness_max < MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS:
-        return Component(0.0, {"diagnosis": "motion_blur_or_shake",
-                               "sharpness_max": frame.sharpness_max})
+    basis = sharpness_basis(frame)
+    if basis.relative and basis.value < basis.floor:
+        return Component(0.0, {"diagnosis": "no_usable_detail",
+                               **basis.evidence})
 
     flat = [v for row in tiles for v in row]
     threshold = frame.sharpness_max * FOCUS_PLANE_TILE_FRACTION

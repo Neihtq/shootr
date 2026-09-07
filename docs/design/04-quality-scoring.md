@@ -123,27 +123,32 @@ From the 16×16 tile map: `sharpness_mean`, `sharpness_max`, and the distributio
 
 For **landscape** this metric becomes dominant and changes meaning entirely — see §4.3.
 
-> ⚠ **KNOWN FLAW (found 2026-08-30, unfixed): the absolute thresholds here are not
-> sound.** `FRAME_SHARPNESS_CURVE` and `MIN_FRAME_SHARPNESS_FOR_EYE_FOCUS` (0.005) map
-> *absolute* Tenengrad values, but §03.1 states — correctly — that absolute Tenengrad is
-> content-dependent and only ratios are diagnostic. Measured: across five files all
-> sharp by eye, `sharpness_max` spans **615×**; a visibly sharp Fuji X-E5 frame scores
-> 0.00065 and is therefore labelled `motion_blur_or_shake` with sharpness 0. Not a
-> Sony/Fuji-only problem — within the one calibrated wedding the values span 1400×, 62
-> photos (1.39%) trip the floor, and the user kept 5 of them.
->
-> The *within-frame* uses are fine (tile map for focus planes, eye sharpness normalized
-> against the frame's own sharpest tile) — those are ratios, as intended. Two candidate
-> normalizations were measured and **both rejected**: level-rescaling neither fixes
-> comparability nor preserves within-shoot ordering (ρ 0.60), and gradient-energy/variance
-> collapses the spread but is anti-correlated with focus (blur *raises* it). Evidence and
-> reproducer: `docs/benchmarks/2026-08-30-arw-raf-validation.md` §4.
->
-> Recommended direction, pending a decision because it changes scoring semantics: score
-> frame sharpness by **percentile within the shoot / scene group** rather than against
-> global constants — ratio-based per §03.1, self-calibrating per camera and lighting, and
-> culling is already comparative. Requires re-validating against the 559-keeper set and
-> replacing the disaster floor with a per-shoot robust low percentile.
+**Sharpness is scored relative to the photo's population, not against absolute
+constants** (fixed 2026-09-07; the flaw and its evidence:
+`docs/benchmarks/2026-08-30-arw-raf-validation.md` §4, resolution and validation:
+`docs/benchmarks/2026-09-07-relative-sharpness.md`).
+
+Absolute Tenengrad is content-dependent — §03.1's "only ratios are diagnostic" — and
+measurement proved it: values span 615× across files that are all sharp by eye, and
+1400× inside one shoot. So the reference is the median `sharpness_max` of the same
+shoot and the same camera body (a two-body wedding is two populations), and the score
+curve runs over the ratio. `scoring.sharpness_basis` is the single place that decides
+relative-vs-absolute, so the curve, the unusable-frame floor and the eye-focus guard
+cannot drift apart.
+
+**Low gradient energy does not mean blur.** Calibration was done by looking at frames:
+an out-of-focus shot of the floor sits at ratio 0.007, but the first dance — smoke,
+darkness, red uplight, perfectly sharp and a keeper — sits at 0.056. Magnitude cannot
+separate shake from defocus from a scene with no detail, so the old
+`motion_blur_or_shake` verdict overclaimed. The hard floor is now deliberately extreme
+(ratio < 0.03), the diagnosis is `no_usable_detail`, and everything above it is carried
+smoothly by the curve. On the reference shoot this took frames wrongly branded unusable
+from 62 to 4, with **zero keepers** among them (was 5), and pick recall rose slightly.
+
+With no population (fewer than 12 frames from that body) the absolute curve still
+yields a score but **the hard verdict is suppressed** — an unusable frame and an
+uncalibrated camera are indistinguishable, so we score and never accuse. Which basis
+was used is always in the evidence.
 
 ### 2.4 Composition — flags with evidence, never a score
 A learned "composition score" would be an opaque model overruling deliberate artistic
