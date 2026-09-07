@@ -140,7 +140,16 @@ usable vector, i.e. ~23% of detected bodies abstain, as the paragraph above pred
 
 ## 5. Person identity
 
-Vision faceprints → agglomerative clustering within a shoot.
+Faceprint embeddings → agglomerative clustering within a shoot.
+
+> ⚠ **There is no public Vision faceprint API** (verified 2026-09-07 by type-checking
+> against the macOS 26 SDK: `VNGenerateFaceprintRequest` does not exist; the SDK's public
+> face requests are rectangles, landmarks and capture quality only — `libfaceCore` is
+> private). The long-standing "needs verification" item is therefore answered **no**.
+> Consequence: person identity is **not available on the Swift path at all**, and the
+> feature depends on the cross-platform analyzer's ArcFace embeddings (design 13), which
+> also removes the weaknesses this section lists below. Until the cutover, `person`
+> groups are never produced.
 
 Enables the most useful selection query in practice: *"best photo of each guest"* — often
 more valuable than scene-based grouping for wedding delivery, since coverage of people is

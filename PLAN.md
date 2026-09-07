@@ -84,7 +84,11 @@ outcome and can be built now.
   raw joints in the JSONL `pose` field (2026-09-07); measured on real frames: 53/60
   detect bodies, 41 normalizable. Objectness saliency still not requested (attention
   saliency covers the current consumers)
-- Faceprint extraction (`VNGenerateFaceprint` API needs verification on this SDK)
+- ~~Faceprint extraction — `VNGenerateFaceprint` verification~~: **the API does not
+  exist** (type-checked against the macOS 26 SDK 2026-09-07; public Vision face requests
+  are rectangles/landmarks/capture-quality only). Person identity (05 §5) is therefore
+  unavailable on the Swift path and rides the analyzer cutover's ArcFace embeddings —
+  no Vision implementation is possible, so this is closed, not deferred
 - ~~MediaPipe blendshape refiner (Python side, swappable)~~ — shipped as
   `engine/tools/backfill_blendshapes.py` 2026-08-29 (SCRFD+MediaPipe over stored
   face rows, bbox-IoU match, provenance-honest); validated on the wedding: blink
@@ -133,6 +137,9 @@ outcome and can be built now.
   extremes, sealed before shot grouping (§04.6)~~
 - ~~Pose grouping: agglomerative, cross-session, abstain on low confidence (§4)~~
 - ~~Person identity: faceprint clustering, split-biased threshold, orthogonal axis (§5)~~
+  — the *clustering* is built and tested, but it has no input on the Swift path: Vision
+  has no faceprint API (see below), so `person` groups only appear after the analyzer
+  cutover
 - ~~User corrections: split/merge pins re-applied after regroup, never break brackets (§7)~~
 - ~~Camera burst-tag *availability check*~~ — measured 2026-08-30 (05 §8): CR3 has
   per-frame drive mode (CMT walker only — rides the analyzer cutover as a negative
