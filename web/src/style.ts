@@ -6,8 +6,6 @@
  * value's sign and decimals, which is typography, not arithmetic.
  */
 
-import { useCallback, useState } from "react";
-
 /** `crs:` slider names → the label Lightroom shows the user. Unknown keys
  * fall through as themselves: the engine's parameter list can grow without
  * this file silently hiding a parameter that is about to be written. */
@@ -59,50 +57,30 @@ export const abstainCopy = (reason: string | null | undefined): string =>
   ABSTAIN_COPY[reason ?? ""] ??
   `The engine abstained (reason: ${reason ?? "unspecified"}).`;
 
-/** Parameters hidden from this preview by default.
+/** Parameters we have a MEASURED reason to recommend excluding, with that
+ * reason in the user's own terms. Surfaced as a suggestion, never applied for
+ * them: the exclusion list lives on the server and changes what is written to
+ * their files, so the client proposing it silently would be the client making
+ * the decision (design 08 §7a, design 10 §1).
  *
- * Measured, not guessed: k-NN beats the family median on 11 of 12 parameters
- * but loses on ColorGradeMidtoneHue
- * (`docs/benchmarks/2026-08-30-style-knn-eval.md`), so it ships hidden.
+ * k-NN beats the family median on 11 of 12 parameters and loses on this one
+ * (`docs/benchmarks/2026-08-30-style-knn-eval.md`: MAE 0.336 vs 0.283 under
+ * leave-one-shot-group-out).
  */
-export const DEFAULT_HIDDEN_PARAMS = ["ColorGradeMidtoneHue"];
+export const SUGGESTED_EXCLUSIONS: Record<string, string> = {
+  ColorGradeMidtoneHue:
+    "Measured on your own edits: the family's median hue beats the per-photo prediction here (MAE 0.283 vs 0.336) — the only parameter of 12 where it does. Excluding it means Shootr leaves midtone hue to you.",
+};
 
-/** localStorage, deliberately: the engine has no user-preference store, so
- * there is nowhere on the server to persist this. Consequence, stated in the
- * UI rather than hidden: this is a per-browser DISPLAY filter and the write
- * endpoint has no per-parameter switch, so hiding a parameter here does not
- * stop it being written (design 08 §6 — engine-side opt-out is still to do).
- */
-const STORAGE_KEY = "shootr.style.hiddenParams";
+/** Engine error codes from the preferences endpoint → human copy. */
+const PREF_ERROR_COPY: Record<string, string> = {
+  unknown_param:
+    "The engine does not model that parameter, so it cannot be excluded. Nothing was changed — reload the screen to pick up the engine's current parameter list.",
+};
 
-function loadHidden(): string[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === null) return DEFAULT_HIDDEN_PARAMS;
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
-  } catch {
-    // Private mode / quota / corrupt value: fall back to the measured default.
-    return DEFAULT_HIDDEN_PARAMS;
-  }
-}
-
-export function useHiddenParams() {
-  const [hidden, setHidden] = useState<string[]>(loadHidden);
-
-  const toggle = useCallback((name: string) => {
-    setHidden((prev) => {
-      const next = prev.includes(name)
-        ? prev.filter((n) => n !== name)
-        : [...prev, name];
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // Non-persistent this session; the toggle still works in-memory.
-      }
-      return next;
-    });
-  }, []);
-
-  return { hidden, toggle };
-}
+export const prefErrorCopy = (
+  code: string | null,
+  message: string,
+): string =>
+  PREF_ERROR_COPY[code ?? ""] ??
+  `The engine rejected the change (${code ?? "error"}): ${message}. Nothing was changed.`;

@@ -9,19 +9,26 @@
  *
  * No arithmetic on predictions happens here (design 10 §1): the family is the
  * engine's, the confidence is the engine's, the abstain/predict verdict is the
- * engine's.
+ * engine's. The per-parameter opt-out is the engine's too — it is stored
+ * server-side and it changes what is written, so the checkboxes below are a
+ * view of `GET /api/style/preferences`, not a local display filter.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { errorCode, thumbUrl } from "../api/client";
-import { useStylePrediction } from "../api/hooks";
+import {
+  useSetStylePreferences,
+  useStylePrediction,
+  useStylePreferences,
+} from "../api/hooks";
 import type { StyleFamily, StylePrediction } from "../api/types";
 import {
   abstainCopy,
   formatParam,
   paramLabel,
   paramUnit,
-  useHiddenParams,
+  prefErrorCopy,
+  SUGGESTED_EXCLUSIONS,
 } from "../style";
 import { StyleWriteDialog } from "./StyleWriteDialog";
 
@@ -55,7 +62,9 @@ export function StylePredictPanel({
   // null = omit `family` from the request so the ENGINE suggests one (§3).
   const [family, setFamily] = useState<number | null>(null);
   const { data, error, isFetching } = useStylePrediction(shootId, family);
-  const { hidden, toggle } = useHiddenParams();
+  const { data: prefs } = useStylePreferences();
+  const setPrefs = useSetStylePreferences();
+  const [prefError, setPrefError] = useState<string | null>(null);
   const [writeOpen, setWriteOpen] = useState(false);
   const [shown, setShown] = useState(PAGE);
 
@@ -70,20 +79,59 @@ export function StylePredictPanel({
   const predicted = predictions.filter((p) => !p.abstained);
   const abstained = predictions.filter((p) => p.abstained);
 
-  // Parameter set the engine actually returned, in its own order. Never a
-  // hardcoded list: if the engine starts predicting another slider, it shows
-  // up here instead of being silently dropped from the preview.
-  const paramNames = useMemo(() => {
+  // The engine's own exclusion list. Never a local copy: it decides what is
+  // written, and `data.excluded_params` is what THIS preview was built with.
+  const excluded = prefs?.excluded_params ?? data?.excluded_params ?? [];
+
+  // Parameter set the engine actually returned (predicted or withheld), in its
+  // own order. Never a hardcoded list: if the engine starts predicting another
+  // slider it shows up here instead of being silently dropped.
+  const returnedNames = useMemo(() => {
     const seen: string[] = [];
     for (const p of predictions) {
-      for (const name of Object.keys(p.params ?? {})) {
+      for (const name of [
+        ...Object.keys(p.params ?? {}),
+        ...Object.keys(p.excluded ?? {}),
+      ]) {
         if (!seen.includes(name)) seen.push(name);
       }
     }
     return seen;
   }, [predictions]);
 
-  const hiddenPresent = paramNames.filter((n) => hidden.includes(n));
+  // The engine's modelable list is the PUT allowlist, so it is the set of
+  // togglable rows; anything it returned that is somehow outside that list is
+  // still shown (read-only) rather than quietly missing from the panel.
+  const modelable = prefs?.modelable_params ?? [];
+  const paramNames = [
+    ...modelable,
+    ...returnedNames.filter((n) => !modelable.includes(n)),
+  ];
+
+  const setExcluded = (next: string[]) => {
+    setPrefError(null);
+    setPrefs.mutate(next, {
+      onError: (e) => setPrefError(prefErrorCopy(errorCode(e), e.message)),
+    });
+  };
+  const toggle = (name: string) =>
+    setExcluded(
+      excluded.includes(name)
+        ? excluded.filter((n) => n !== name)
+        : [...excluded, name],
+    );
+
+  // Measured suggestions the user hasn't taken up yet. One click applies them;
+  // the client never applies one on its own (design 08 §7a).
+  const suggested = Object.keys(SUGGESTED_EXCLUSIONS).filter(
+    (n) => modelable.includes(n) && !excluded.includes(n),
+  );
+
+  // How many previewed photos actually had a value withheld — "you opted out
+  // of a parameter" and "it affected these photos" are different facts.
+  const withheldCount = predictions.filter(
+    (p) => Object.keys(p.excluded ?? {}).length > 0,
+  ).length;
 
   if (error) {
     const code = errorCode(error);
@@ -151,6 +199,13 @@ export function StylePredictPanel({
           <span className="text-neutral-400">
             {predicted.length} predicted · {abstained.length} abstaining ·{" "}
             {predictions.length} previewed
+            {excluded.length > 0 && (
+              <span className="text-neutral-500">
+                {" · "}
+                {excluded.length} parameter{excluded.length === 1 ? "" : "s"} you
+                excluded
+              </span>
+            )}
           </span>
         )}
 
@@ -168,33 +223,96 @@ export function StylePredictPanel({
         </button>
       </div>
 
-      {paramNames.length > 0 && (
+      {/* Waits for the engine's list rather than guessing one: the togglable
+          set IS `modelable_params`, and a toggle here writes to the user's
+          files. */}
+      {prefs && paramNames.length > 0 && (
         <div className="mb-3 rounded border border-neutral-800 p-2">
           <div className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
-            Parameters — display filter for this preview only
+            Parameters — which ones Shootr is allowed to write
           </div>
-          <div className="mb-2 text-[11px] text-amber-300/90">
-            These toggles change what you see here. They do NOT change what gets
-            written: the engine's write endpoint applies every predicted
-            parameter and has no per-parameter switch yet (design 08 §6). The
-            write dialog repeats this and names anything you switched off.
+          <div className="mb-2 text-[11px] text-neutral-400">
+            Unchecked parameters are never written to your files. The engine
+            stores this choice and applies it everywhere — this preview, the
+            write, and the native client alike. Values it predicted for an
+            excluded parameter are still shown below, struck through, so you can
+            see what you turned down rather than losing sight of it.
           </div>
+
           <div className="flex flex-wrap gap-x-4 gap-y-1">
-            {paramNames.map((name) => (
-              <label
-                key={name}
-                className="flex items-center gap-1.5 text-[11px] text-neutral-300"
-                title={name}
-              >
-                <input
-                  type="checkbox"
-                  checked={!hidden.includes(name)}
-                  onChange={() => toggle(name)}
-                />
-                {paramLabel(name)}
-              </label>
-            ))}
+            {paramNames.map((name) => {
+              const off = excluded.includes(name);
+              const togglable = modelable.includes(name);
+              return (
+                <label
+                  key={name}
+                  className={`flex items-center gap-1.5 text-[11px] ${
+                    off ? "text-neutral-500" : "text-neutral-300"
+                  } ${togglable ? "" : "opacity-60"}`}
+                  title={
+                    togglable
+                      ? name
+                      : `${name} — the engine returned this but does not list it as modelable, so it cannot be excluded`
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={!off}
+                    disabled={!togglable || setPrefs.isPending}
+                    onChange={() => toggle(name)}
+                  />
+                  <span className={off ? "line-through" : ""}>
+                    {paramLabel(name)}
+                  </span>
+                  {off && (
+                    <span className="text-[10px] text-neutral-500">
+                      not written
+                    </span>
+                  )}
+                </label>
+              );
+            })}
           </div>
+
+          {setPrefs.isPending && (
+            <div className="mt-2 text-[11px] text-neutral-500">
+              Saving to the engine and re-predicting…
+            </div>
+          )}
+
+          {prefError && (
+            <div className="mt-2 rounded border border-red-900 bg-red-950/40 p-2 text-[11px] text-red-300">
+              {prefError}
+            </div>
+          )}
+
+          {suggested.map((name) => (
+            // A suggestion, not an action taken for them: excluding a parameter
+            // changes the user's files, so the reason is stated and the click
+            // is theirs (design 08 §7a).
+            <div
+              key={name}
+              className="mt-2 rounded border border-sky-900 bg-sky-950/30 p-2 text-[11px] text-sky-200"
+            >
+              <div className="mb-1">
+                <span className="font-medium">
+                  Suggested: don't write {paramLabel(name)}.
+                </span>{" "}
+                {SUGGESTED_EXCLUSIONS[name]}
+              </div>
+              <div className="text-sky-300/70">
+                Nothing has been changed — this parameter is currently being
+                written.
+              </div>
+              <button
+                onClick={() => setExcluded([...excluded, name])}
+                disabled={setPrefs.isPending}
+                className="mt-1.5 rounded border border-sky-700 px-2 py-0.5 hover:bg-sky-900/50 disabled:opacity-50"
+              >
+                Exclude {paramLabel(name)}
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -206,7 +324,7 @@ export function StylePredictPanel({
 
       <div className="space-y-2">
         {predictions.slice(0, shown).map((p) => (
-          <PredictionRow key={p.photo_id} pred={p} hidden={hidden} />
+          <PredictionRow key={p.photo_id} pred={p} />
         ))}
       </div>
 
@@ -226,7 +344,8 @@ export function StylePredictPanel({
           processVersion={data.process_version}
           photoIds={predicted.map((p) => p.photo_id)}
           abstainCount={abstained.length}
-          hiddenParams={hiddenPresent}
+          excludedParams={data.excluded_params ?? excluded}
+          withheldCount={withheldCount}
           onClose={() => setWriteOpen(false)}
         />
       )}
@@ -234,15 +353,12 @@ export function StylePredictPanel({
   );
 }
 
-function PredictionRow({
-  pred,
-  hidden,
-}: {
-  pred: StylePrediction;
-  hidden: string[];
-}) {
+function PredictionRow({ pred }: { pred: StylePrediction }) {
   const params = Object.entries(pred.params ?? {});
-  const shownParams = params.filter(([name]) => !hidden.includes(name));
+  // Predicted, then withheld because the user said so. Rendered — not dropped,
+  // and not dressed up as an abstention: the engine reports the number on
+  // purpose so the user can see what they turned down (design 08 §7a).
+  const excluded = Object.entries(pred.excluded ?? {});
   const neighbors = pred.neighbor_photo_ids ?? [];
 
   return (
@@ -292,9 +408,9 @@ function PredictionRow({
               </span>
             )}
           </div>
-        ) : shownParams.length > 0 ? (
+        ) : params.length > 0 ? (
           <div className="flex flex-wrap gap-1">
-            {shownParams.map(([name, value]) => (
+            {params.map(([name, value]) => (
               <span
                 key={name}
                 className="rounded bg-neutral-800/70 px-1.5 py-0.5 font-mono text-[10px] text-neutral-300"
@@ -306,11 +422,33 @@ function PredictionRow({
             ))}
           </div>
         ) : (
-          // Predicted, but every parameter is hidden by the display filter —
-          // say so, rather than showing an empty row that reads as "no edit".
+          // Predicted, but every value belongs to a parameter the user
+          // excluded — say so, rather than showing an empty row that reads as
+          // "no edit needed".
           <div className="text-[11px] text-neutral-500">
-            {params.length} predicted parameter{params.length === 1 ? "" : "s"},
-            all hidden by your display filter above.
+            {excluded.length} predicted parameter
+            {excluded.length === 1 ? "" : "s"}, all of them ones you excluded —
+            nothing from this prediction will be written.
+          </div>
+        )}
+
+        {excluded.length > 0 && (
+          // Deliberately NOT amber: an abstention is the engine having nothing
+          // to say, this is the user's own decision being honoured.
+          <div className="mt-1 flex flex-wrap items-baseline gap-1">
+            <span className="text-[10px] uppercase tracking-wide text-neutral-500">
+              excluded by you — predicted, not written:
+            </span>
+            {excluded.map(([name, value]) => (
+              <span
+                key={name}
+                className="rounded border border-neutral-700 px-1.5 py-0.5 font-mono text-[10px] text-neutral-500 line-through"
+                title={`${name} — you excluded this parameter; the engine predicted ${formatParam(name, value)}${paramUnit(name)} and will not write it`}
+              >
+                {paramLabel(name)} {formatParam(name, value)}
+                {paramUnit(name)}
+              </span>
+            ))}
           </div>
         )}
 
@@ -327,13 +465,6 @@ function PredictionRow({
           </div>
         )}
 
-        {params.length > shownParams.length && shownParams.length > 0 && (
-          <div className="mt-1 text-[10px] text-neutral-500">
-            {params.length - shownParams.length} more predicted parameter
-            {params.length - shownParams.length === 1 ? "" : "s"} hidden by the
-            display filter (still written).
-          </div>
-        )}
       </div>
 
       {neighbors.length > 0 && (

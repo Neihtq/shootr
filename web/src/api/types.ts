@@ -217,6 +217,11 @@ export interface StylePrediction {
    * (design 08 §6). Rendered, never silent: a withheld exposure push would
    * otherwise appear as an unexplained number (README rule 5). */
   damped?: Record<string, string>;
+  /** Parameters the engine DID predict (the value is here) but will not
+   * write, because the user excluded them (design 08 §7a). Distinct from an
+   * abstention: "we had a number and you told us not to write it" is not
+   * "we had nothing", so the UI must render it as neither. */
+  excluded?: Record<string, number>;
   /** The history photos the blend came from — the whole reason k-NN was
    * chosen over a trained model (design 08 §4). Present on
    * `low_confidence` too: "closest we had, still not close enough". */
@@ -229,7 +234,21 @@ export interface StylePredictResult {
    * when the request omitted it. */
   family: number;
   process_version: string;
+  /** The user's per-parameter opt-out as the engine applied it to THIS
+   * preview — not a client-side filter (design 08 §7a). */
+  excluded_params: string[];
   predictions: StylePrediction[];
+}
+
+/** GET/PUT /api/style/preferences (design 08 §7a). The per-parameter opt-out
+ * lives in the engine's `preference` table because it changes what lands in
+ * the user's files: a client-local switch would let web and native write
+ * different edits from the same click. `modelable_params` is the engine's own
+ * parameter list and the PUT allowlist — a name outside it is a 400
+ * `unknown_param`. */
+export interface StylePreferences {
+  excluded_params: string[];
+  modelable_params: string[];
 }
 
 /** POST /api/shoots/{id}/style/export-develop. Conflicts are sidecars that
@@ -239,6 +258,9 @@ export interface StyleExportResult {
   written: number[];
   abstained: { photo_id: number; reason: string }[];
   conflicts: { photo_id: number; path: string }[];
+  /** The opt-out the engine honoured on this write: these parameters were
+   * predicted for some photos and deliberately left out of every sidecar. */
+  excluded_params: string[];
   note: string;
 }
 

@@ -72,7 +72,7 @@ class TestContract:
         client, _ = env
         r = client.get("/api/health")
         assert r.status_code == 200
-        assert r.json()["schema_version"] == 4
+        assert r.json()["schema_version"] == 5
 
     def test_error_envelope_shape(self, env):
         """Stable code/message/detail/retryable (design 10 §5)."""

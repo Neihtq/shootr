@@ -122,7 +122,9 @@ def test_per_parameter_optout_is_honoured_on_write(env):
     client, _, lib = env
     prefs = client.get("/api/style/preferences").json()
     assert "Exposure2012" in prefs["modelable_params"]
-    assert prefs["excluded_params"] == []
+    # Shipped default, from the measurement (08 §6): the family median beats
+    # k-NN on this one parameter, so it starts excluded.
+    assert prefs["excluded_params"] == ["ColorGradeMidtoneHue"]
 
     r = client.put("/api/style/preferences",
                    json={"excluded_params": ["Exposure2012"]})
@@ -150,4 +152,6 @@ def test_unknown_param_is_rejected_not_silently_stored(env):
                    json={"excluded_params": ["NotAParam"]})
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "unknown_param"
-    assert client.get("/api/style/preferences").json()["excluded_params"] == []
+    # Rejected wholesale — the prior value stands, nothing partially applied.
+    assert client.get("/api/style/preferences").json()[
+        "excluded_params"] == ["ColorGradeMidtoneHue"]

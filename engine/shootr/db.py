@@ -213,8 +213,19 @@ CREATE TABLE preference (
 );
 """
 
+# The one measured default (design 08 §6 / §7a): the family median beats the
+# per-photo prediction on ColorGradeMidtoneHue — the only parameter of 12 where
+# it does (docs/benchmarks/2026-08-30-style-knn-eval.md). It belongs here, not
+# in a client PUT: a default that only exists in one client is not a default,
+# and a client writing preferences on load would be the client deciding.
+_MIGRATION_5 = """
+INSERT INTO preference (key, value, updated_at)
+VALUES ('style.excluded_params', '["ColorGradeMidtoneHue"]', datetime('now'))
+ON CONFLICT(key) DO NOTHING;
+"""
+
 MIGRATIONS: list[str] = [_MIGRATION_1, _MIGRATION_2, _MIGRATION_3,
-                         _MIGRATION_4]
+                         _MIGRATION_4, _MIGRATION_5]
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:

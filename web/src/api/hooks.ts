@@ -8,7 +8,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { del, get, patch, post } from "./client";
+import { del, get, patch, post, put } from "./client";
 import type {
   AnalyzeStart,
   ExportPreview,
@@ -27,6 +27,7 @@ import type {
   StyleExportResult,
   StyleFamily,
   StylePredictResult,
+  StylePreferences,
 } from "./types";
 
 export const useLibraries = () =>
@@ -200,6 +201,35 @@ export const useStyleFamilies = () =>
     queryFn: () => get<StyleFamily[]>("/api/style/families"),
     retry: false,
   });
+
+/** The per-parameter opt-out (design 08 §6, §7a). Server state, not a
+ * browser setting: it decides what gets written into the user's files, so
+ * both clients must read the same answer. */
+export const useStylePreferences = () =>
+  useQuery({
+    queryKey: ["style", "preferences"],
+    queryFn: () => get<StylePreferences>("/api/style/preferences"),
+  });
+
+/** Sets the whole exclusion list (the endpoint is a PUT, not a patch — the
+ * body is the new list). Excluding a parameter changes what the engine
+ * predicts *and* returns, so the prediction preview is invalidated: leaving a
+ * stale preview on screen would show values that are no longer what a write
+ * would produce. A name outside `modelable_params` comes back as a 400
+ * `unknown_param`; callers render it. */
+export const useSetStylePreferences = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (excludedParams: string[]) =>
+      put<{ excluded_params: string[] }>("/api/style/preferences", {
+        excluded_params: excludedParams,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["style", "preferences"] });
+      qc.invalidateQueries({ queryKey: ["style", "predict"] });
+    },
+  });
+};
 
 /** Prediction PREVIEW for a shoot. POST because the engine needs a body,
  * but it is read-only and writes nothing — modelled as a query so switching

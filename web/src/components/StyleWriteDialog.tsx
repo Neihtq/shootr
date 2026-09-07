@@ -6,6 +6,10 @@
  * hold the user's own develop settings — get NO override control, because the
  * engine has no override parameter: they are skipped and reported, and the
  * copy says so plainly (design 08 §6, README rule 3).
+ *
+ * The per-parameter opt-out is enforced by the engine on this path, so the
+ * excluded parameters are simply reported as not written — the dialog states
+ * the write's real scope, it does not filter anything itself.
  */
 
 import { useState } from "react";
@@ -19,7 +23,8 @@ export function StyleWriteDialog({
   processVersion,
   photoIds,
   abstainCount,
-  hiddenParams,
+  excludedParams,
+  withheldCount,
   onClose,
 }: {
   shootId: number;
@@ -29,9 +34,11 @@ export function StyleWriteDialog({
   /** Photos the engine produced a prediction for, in preview order. */
   photoIds: number[];
   abstainCount: number;
-  /** Parameters hidden by the preview's display filter that the engine will
-   * nevertheless write. Named explicitly rather than quietly dropped. */
-  hiddenParams: string[];
+  /** The engine's exclusion list as it applied to the preview: these are
+   * predicted but will not be written. Named, not quietly dropped. */
+  excludedParams: string[];
+  /** Previewed photos where a value was actually withheld. */
+  withheldCount: number;
   onClose: () => void;
 }) {
   const write = useStyleExportDevelop(shootId);
@@ -84,21 +91,27 @@ export function StyleWriteDialog({
               </li>
             </ul>
 
-            {hiddenParams.length > 0 && (
-              // Honesty over convenience: the toggles filter the preview, and
-              // the endpoint takes no parameter list, so pretending the write
-              // honours them would be a lie about the user's files.
-              <div className="mb-3 rounded border border-amber-900 bg-amber-950/40 p-2 text-xs text-amber-200">
-                {hiddenParams.length} parameter
-                {hiddenParams.length === 1 ? "" : "s"} you switched off in the
-                preview{" "}
+            {excludedParams.length > 0 && (
+              // The engine holds this list and enforces it on the write path,
+              // so this is a statement of fact about the files, not a UI hint.
+              <div className="mb-3 rounded border border-neutral-700 bg-neutral-800/40 p-2 text-xs text-neutral-300">
+                {excludedParams.length} parameter
+                {excludedParams.length === 1 ? "" : "s"} you excluded{" "}
                 <span className="font-mono">
-                  ({hiddenParams.map(paramLabel).join(", ")})
+                  ({excludedParams.map(paramLabel).join(", ")})
                 </span>{" "}
-                WILL still be written. The engine's write endpoint applies every
-                predicted parameter and takes no per-parameter switch, so the
-                toggles filter what you see, not what lands on disk.
-                Engine-side opt-out is still to be built (design 08 §6).
+                {excludedParams.length === 1 ? "is" : "are"} not written. The
+                engine leaves {excludedParams.length === 1 ? "it" : "them"} out
+                of every sidecar on this run
+                {withheldCount > 0 && (
+                  <>
+                    {" "}
+                    — {withheldCount} of these photos had a predicted value for{" "}
+                    {excludedParams.length === 1 ? "it" : "one of them"}, shown
+                    struck through in the preview
+                  </>
+                )}
+                . Those sliders stay as they are in Lightroom, yours to set.
               </div>
             )}
 
@@ -132,6 +145,19 @@ export function StyleWriteDialog({
               Wrote {result.written.length} sidecar
               {result.written.length === 1 ? "" : "s"}.
             </div>
+
+            {result.excluded_params.length > 0 && (
+              // The engine reports back which exclusions it honoured; relayed
+              // so the write's scope is confirmed rather than assumed.
+              <div className="mb-3 text-xs text-neutral-400">
+                Left out, as you asked:{" "}
+                <span className="font-mono">
+                  {result.excluded_params.map(paramLabel).join(", ")}
+                </span>
+                . No value for {result.excluded_params.length === 1 ? "it" : "them"}{" "}
+                was written to any of these files.
+              </div>
+            )}
 
             {result.abstained.length > 0 && (
               <div className="mb-3 text-xs text-neutral-400">
