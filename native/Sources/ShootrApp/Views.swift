@@ -404,6 +404,11 @@ struct GroupReviewView: View {
         .sheet(isPresented: $model.showShortcuts) {
             ShortcutsSheet(profile: model.shoot?.profile ?? "event")
         }
+        .sheet(isPresented: $model.showStyle) {
+            if let shoot = model.shoot {
+                StyleSheet(shoot: shoot)
+            }
+        }
     }
 
     private var header: some View {
@@ -451,6 +456,11 @@ struct GroupReviewView: View {
                     .font(.system(size: 11))
             }
             .help("Shoot settings — rename, change genre (instant rescore)")
+            Button("Style…") {
+                model.showStyle = true
+            }
+            .font(Theme.caption)
+            .help("Look families and predicted develop settings (D)")
             Button("Export…") {
                 model.showExport = true
             }
@@ -665,6 +675,9 @@ enum Shortcuts {
         Item("O", "composition overlay", "thirds grid + face boxes"),
         Item("B", "eye crops", "full-res eyes of the primary face — blink check"),
         Item("E", "evidence panel", "per-metric scores behind the verdict"),
+        Item("D", "style / develop",
+             "look families, predicted develop settings and the photos they "
+             + "were learned from — a preview; writes only on confirm"),
         Item("?", "this list"),
     ]
 
@@ -1177,7 +1190,7 @@ struct KeyCatcher: NSViewRepresentable {
                 // Sheets own the keyboard while open (compare handles its
                 // own Z; export/settings are form UIs).
                 if model.comparing || model.showExport || model.showSettings
-                    || model.showShortcuts {
+                    || model.showShortcuts || model.showStyle {
                     return event
                 }
                 // Don't steal keys from an active text field (the field
@@ -1236,6 +1249,7 @@ struct KeyCatcher: NSViewRepresentable {
             case "s": model.showSharpness.toggle()
             case "o": model.showComposition.toggle()
             case "b": model.showEyes.toggle()
+            case "d": model.showStyle = true
             // "/" too: ? is shift-/ on US layouts but not on every layout,
             // and the unshifted key is what people actually press.
             case "?", "/": model.showShortcuts = true

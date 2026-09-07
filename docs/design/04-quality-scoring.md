@@ -168,6 +168,9 @@ facts**, and the user weights them.
 `limb_cut_at_joint` needs the anatomical nuance: cutting **at** a joint is the classic
 error, cutting **between** joints is normal. Flagging every limb crossing the frame edge
 would fire on nearly every environmental portrait and get the whole flag set ignored.
+Implemented 2026-09-07 (`pose.limb_cut_at_joint`): only elbow, wrist, knee and ankle
+joints are checked, and only within 2% of an edge; the flag names the joint so the user
+can see what it saw. Low-confidence joints never flag.
 
 Composition score = weighted flag penalties, each individually visible so the user can
 disagree with one without discarding the metric.

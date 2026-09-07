@@ -80,6 +80,19 @@ public struct SaliencyOut: Codable {
     public init(attentionBbox: [Double]?) { self.attentionBbox = attentionBbox }
 }
 
+/// One detected body. `joints` maps Vision joint names to
+/// [x, y, confidence] in normalized bottom-left coords (design 03 §4).
+/// Raw joints, not a pose vector: normalization (hip-translate,
+/// torso-scale, confidence filter) is the engine's job (design 05 §4), so
+/// both analyzers only have to agree on what they measured.
+public struct PoseOut: Codable {
+    public var joints: [String: [Double]]
+    public var confidence: Double
+    public init(joints: [String: [Double]], confidence: Double) {
+        self.joints = joints; self.confidence = confidence
+    }
+}
+
 public struct AnalyzeOut: Codable {
     public var path: String
     public var decodeMode: String
@@ -87,6 +100,7 @@ public struct AnalyzeOut: Codable {
     public var frame: FrameOut
     public var saliency: SaliencyOut?
     public var faces: [FaceOut]
+    public var pose: [PoseOut]
     public var embedding: String?  // base64 float32 feature print
     public var embeddingDim: Int?
     public var timingMs: [String: Int]
@@ -95,16 +109,17 @@ public struct AnalyzeOut: Codable {
         case path
         case decodeMode = "decode_mode"
         case engineVersion = "engine_version"
-        case frame, saliency, faces, embedding
+        case frame, saliency, faces, pose, embedding
         case embeddingDim = "embedding_dim"
         case timingMs = "timing_ms"
     }
     public init(path: String, decodeMode: String, engineVersion: String,
                 frame: FrameOut, saliency: SaliencyOut?, faces: [FaceOut],
+                pose: [PoseOut] = [],
                 embedding: String?, embeddingDim: Int?, timingMs: [String: Int]) {
         self.path = path; self.decodeMode = decodeMode
         self.engineVersion = engineVersion; self.frame = frame
-        self.saliency = saliency; self.faces = faces
+        self.saliency = saliency; self.faces = faces; self.pose = pose
         self.embedding = embedding; self.embeddingDim = embeddingDim
         self.timingMs = timingMs
     }

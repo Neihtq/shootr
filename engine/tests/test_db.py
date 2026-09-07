@@ -17,10 +17,10 @@ def conn(tmp_path):
 def test_migrations_apply_and_are_idempotent(tmp_path):
     db = tmp_path / "shootr.db"
     c1 = connect(db)
-    assert schema_version(c1) == 2
+    assert schema_version(c1) == 3
     c1.close()
     c2 = connect(db)  # reopening must not re-apply
-    assert schema_version(c2) == 2
+    assert schema_version(c2) == 3
     c2.close()
 
 

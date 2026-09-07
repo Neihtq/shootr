@@ -16,6 +16,12 @@ export class EngineError extends Error {
   }
 }
 
+/** The engine's stable error `code` for an unknown thrown value, or null if
+ * it wasn't an engine error. Callers switch on the code (design 10 §5)
+ * rather than matching message text. */
+export const errorCode = (err: unknown): string | null =>
+  err instanceof EngineError ? err.api.code : null;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },

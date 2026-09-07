@@ -179,19 +179,127 @@ struct Library: Codable {
     }
 }
 
+// MARK: - Style learning (design 08 §7a)
+//
+// Mirrors only. Every number here — traits, medians, confidence, the
+// neighbour ids, the abstain reason — is the engine's. The client renders
+// them; it never blends, gates, or clamps anything (design 08 §7a, 10 §1).
+
+struct StyleFamily: Codable, Identifiable {
+    let id: Int
+    let size: Int
+    /// Engine-written trait label, e.g. "+Highlights2012 +Exposure2012".
+    /// Rendered verbatim — restating it in our own words is how two clients
+    /// start describing the same family differently.
+    let traits: String
+    let samplePhotoIds: [Int]
+    let median: [String: Double]
+
+    enum CodingKeys: String, CodingKey {
+        case id, size, traits, median
+        case samplePhotoIds = "sample_photo_ids"
+    }
+}
+
+/// One photo's prediction. `abstained` is a first-class state, not an
+/// empty result: `params` nil/empty with `abstained == true` means "no
+/// confident prediction", never "no changes needed" (design 08 §7a).
+struct StylePrediction: Codable {
+    let photoId: Int
+    let abstained: Bool
+    /// `low_confidence` · `no_similar_history` · `family_too_small` ·
+    /// `not_analyzed`. nil when the engine predicted.
+    let reason: String?
+    let confidence: Double?
+    let params: [String: Double]?
+    /// The history photos the blend came from — the explanation for the
+    /// numbers (design 08 §4). Present even for a low-confidence abstention.
+    let neighborPhotoIds: [Int]?
+
+    enum CodingKeys: String, CodingKey {
+        case abstained, reason, confidence, params
+        case photoId = "photo_id"
+        case neighborPhotoIds = "neighbor_photo_ids"
+    }
+}
+
+struct StylePredictResponse: Codable {
+    /// The family actually used — the auto-suggestion when none was sent.
+    let family: Int
+    let processVersion: String
+    let predictions: [StylePrediction]
+
+    enum CodingKeys: String, CodingKey {
+        case family, predictions
+        case processVersion = "process_version"
+    }
+}
+
+struct StyleAbstention: Codable {
+    let photoId: Int
+    let reason: String?
+    enum CodingKeys: String, CodingKey {
+        case reason
+        case photoId = "photo_id"
+    }
+}
+
+/// A sidecar already holding the user's own develop settings. Reported and
+/// skipped; there is deliberately no override parameter on this path
+/// (design 08 §6), so the UI offers no control for it either.
+struct StyleConflict: Codable {
+    let photoId: Int
+    let path: String
+    enum CodingKeys: String, CodingKey {
+        case path
+        case photoId = "photo_id"
+    }
+}
+
+struct StyleWriteResult: Codable {
+    let written: [Int]
+    let abstained: [StyleAbstention]
+    let conflicts: [StyleConflict]
+    /// The engine's own sentence about the conflicts — shown verbatim.
+    let note: String
+}
+
 // MARK: - Client
+
+/// The engine's structured error body (`{"detail": {code, message, …}}`).
+/// Decoding it is what lets the UI answer `insufficient_history` with useful
+/// copy instead of dumping a JSON blob at the user.
+struct EngineFault: Codable {
+    let code: String
+    let message: String
+    let retryable: Bool?
+}
+
+private struct EngineFaultEnvelope: Codable {
+    let detail: EngineFault
+}
 
 enum APIError: Error, CustomStringConvertible {
     case http(Int, String)
+    case engine(Int, EngineFault)
     case engineUnreachable
 
     var description: String {
         switch self {
         case .http(let status, let message):
             return "engine error \(status): \(message)"
+        case .engine(_, let fault):
+            return fault.message
         case .engineUnreachable:
             return "engine not running — start it with: python -m shootr.api"
         }
+    }
+
+    /// Engine error code when there is one (`insufficient_history`,
+    /// `no_selection`, `not_analyzed`, …), so views can map it to copy.
+    var code: String? {
+        if case .engine(_, let fault) = self { return fault.code }
+        return nil
     }
 }
 
@@ -220,6 +328,10 @@ struct APIClient: Sendable {
         }
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
+            if let env = try? JSONDecoder().decode(
+                EngineFaultEnvelope.self, from: data) {
+                throw APIError.engine(status, env.detail)
+            }
             let msg = String(data: data, encoding: .utf8) ?? ""
             throw APIError.http(status, msg)
         }
@@ -431,6 +543,53 @@ struct APIClient: Sendable {
         let body = try JSONEncoder().encode(
             ShootPatchBody(name: name, profile: profile))
         return try await request("PATCH", "api/shoots/\(id)", body: body)
+    }
+
+    // MARK: style (design 08 §7a — engine predicts, client renders)
+
+    func styleFamilies() async throws -> [StyleFamily] {
+        try await request("GET", "api/style/families")
+    }
+
+    /// `family: nil` omits the key entirely so the engine auto-suggests from
+    /// scene similarity; `photoIds: nil` defaults to the shoot's latest
+    /// picks. Both defaults are the engine's — the client has no business
+    /// guessing a look family.
+    struct StylePredictBody: Codable {
+        let family: Int?
+        let photoIds: [Int]?
+        enum CodingKeys: String, CodingKey {
+            case family
+            case photoIds = "photo_ids"
+        }
+    }
+
+    func stylePredict(shootId: Int, family: Int?, photoIds: [Int]?)
+        async throws -> StylePredictResponse {
+        let body = try JSONEncoder().encode(
+            StylePredictBody(family: family, photoIds: photoIds))
+        return try await request(
+            "POST", "api/shoots/\(shootId)/style/predict", body: body)
+    }
+
+    struct StyleExportBody: Codable {
+        let family: Int
+        let photoIds: [Int]
+        enum CodingKeys: String, CodingKey {
+            case family
+            case photoIds = "photo_ids"
+        }
+    }
+
+    /// Writes `crs:` develop attributes for the given photos. Note there is
+    /// no per-parameter argument and no conflict override — the endpoint
+    /// writes every predicted parameter and skips user-edited sidecars.
+    func styleExportDevelop(shootId: Int, family: Int, photoIds: [Int])
+        async throws -> StyleWriteResult {
+        let body = try JSONEncoder().encode(
+            StyleExportBody(family: family, photoIds: photoIds))
+        return try await request(
+            "POST", "api/shoots/\(shootId)/style/export-develop", body: body)
     }
 
     struct SharpnessMap: Codable {

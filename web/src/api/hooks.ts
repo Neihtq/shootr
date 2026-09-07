@@ -24,6 +24,9 @@ import type {
   SharpnessMap,
   Shoot,
   ShootProposal,
+  StyleExportResult,
+  StyleFamily,
+  StylePredictResult,
 } from "./types";
 
 export const useLibraries = () =>
@@ -177,6 +180,62 @@ export const useExport = (selectionId: number | null) => {
       }),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["selection", selectionId] }),
+  });
+};
+
+/** -- style learning (design 08 §7a) ---------------------------------------
+ *
+ * Every value on these screens — families, traits, medians, predicted
+ * params, confidence, neighbours, abstentions — is computed by the engine.
+ * The client renders it (design 10 §1); there is deliberately no local
+ * blending, no confidence maths, no re-derived abstention rule here.
+ */
+
+/** Look families, spanning all imported history: looks belong to the user,
+ * not to a shoot. 409 `insufficient_history` is a legitimate state, not a
+ * transient failure, so retries are off — the screen renders the state. */
+export const useStyleFamilies = () =>
+  useQuery({
+    queryKey: ["style", "families"],
+    queryFn: () => get<StyleFamily[]>("/api/style/families"),
+    retry: false,
+  });
+
+/** Prediction PREVIEW for a shoot. POST because the engine needs a body,
+ * but it is read-only and writes nothing — modelled as a query so switching
+ * family re-reads instead of accumulating mutation state.
+ *
+ * `family: null` lets the engine auto-suggest (design 08 §3); the resolved
+ * family comes back in the response. `photo_ids` is omitted so the engine
+ * uses the shoot's latest selection picks — the client does not decide the
+ * scope of a cull. */
+export const useStylePrediction = (
+  shootId: number | null,
+  family: number | null,
+) =>
+  useQuery({
+    queryKey: ["style", "predict", shootId, family],
+    queryFn: () =>
+      post<StylePredictResult>(`/api/shoots/${shootId}/style/predict`, {
+        family,
+      }),
+    enabled: shootId !== null,
+    retry: false,
+  });
+
+/** Writes predicted `crs:` values to XMP sidecars via the §07 Rule-2
+ * protocol. Abstentions write nothing; conflicting sidecars are skipped and
+ * reported — the endpoint takes no override flag, by design. */
+export const useStyleExportDevelop = (shootId: number | null) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { family: number; photo_ids: number[] }) =>
+      post<StyleExportResult>(
+        `/api/shoots/${shootId}/style/export-develop`,
+        body,
+      ),
+    // A write changes what a re-preview would find (sidecars now conflict).
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["style", "predict"] }),
   });
 };
 

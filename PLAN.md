@@ -80,8 +80,10 @@ outcome and can be built now.
 - ~~Blink baseline: landmark eye-aspect-ratio, `eye_source` provenance~~
 - ~~Python driver (`shootr.helper`): temp-file lists, incremental JSONL, `swift_prober`
   wired into ingest~~
-- Body pose + objectness saliency requests (grouping consumes pose vectors; deferred
-  with pose-vector construction)
+- ~~Body pose request~~ — `VNDetectHumanBodyPoseRequest` in the helper's Vision batch,
+  raw joints in the JSONL `pose` field (2026-09-07); measured on real frames: 53/60
+  detect bodies, 41 normalizable. Objectness saliency still not requested (attention
+  saliency covers the current consumers)
 - Faceprint extraction (`VNGenerateFaceprint` API needs verification on this SDK)
 - ~~MediaPipe blendshape refiner (Python side, swappable)~~ — shipped as
   `engine/tools/backfill_blendshapes.py` 2026-08-29 (SCRFD+MediaPipe over stored
@@ -113,7 +115,9 @@ outcome and can be built now.
 - ~~Bracket suppression of exposure metric (§6)~~
 - ~~Composition flag *detectors*: face_clipped, subject_near_edge, no_headroom,
   lead_room_inverted, horizon_tilt, thirds_distance — from analysis rows (§2.4)~~
-- `limb_cut_at_joint` detector — needs body-pose joints (deferred with pose requests)
+- ~~`limb_cut_at_joint` detector~~ — `pose.limb_cut_at_joint` (2026-09-07): only
+  cut-*sensitive* joints (elbow/wrist/knee/ankle) within 2% of an edge, so it does not
+  fire on every environmental portrait
 - ~~Landscape focus-plane logic: tile coverage + corner softness (§4.3)~~ — plane
   location vs. EXIF cross-reference deferred to M2 (needs calibration data)
 - ~~Per-group profile hints: no-faces named + renormalized, group-shot composition
@@ -135,8 +139,14 @@ outcome and can be built now.
   gate); CR2-via-exifread unreliable; ARW/RAF pending samples. Gate wiring deferred
   to the cutover's probe contract
 - Scene-blocking for person clustering at >20k faces (§6) — brute force fine at shoot scale
-- Pose vector *construction* (hip-translate, torso-scale, joint-confidence filter) —
-  belongs to the Swift helper / analysis side; grouping consumes the normalized vector
+- ~~Pose vector construction~~ — `shootr.pose` (2026-09-07): hip-translate, torso-scale,
+  confidence filter, and **abstention** when hips/shoulders are missing or coverage is
+  sparse; wired into `group_shoot` (portrait profile only, per 05 §4) and persisted as
+  raw joints on `analysis.pose` (migration 3)
+- Pose in the **Python analyzer** — the Swift path emits `pose`, the cross-platform one
+  does not yet, so the cutover would lose pose grouping and limb-cut flags. Needs a
+  skeleton mapped onto Vision's joint names (design 13 lists ViTPose-L; MediaPipe Pose
+  is the cheap interim)
 
 ### Culling (`06`)
 - ~~Three-state proposal (pick/alt/reject), rejects write nothing by default (§1)~~

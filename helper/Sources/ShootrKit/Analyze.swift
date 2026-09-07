@@ -20,9 +20,13 @@ public func analyze(url: URL, scale: Double) throws -> AnalyzeOut {
     let saliency = VNGenerateAttentionBasedSaliencyImageRequest()
     let horizon = VNDetectHorizonRequest()
     let featurePrint = VNGenerateImageFeaturePrintRequest()
+    // Body pose feeds two consumers: the pose vector for cross-session pose
+    // grouping (design 05 §4) and the limb-cut composition flag (04 §2.4).
+    let bodyPose = VNDetectHumanBodyPoseRequest()
 
     let handler = VNImageRequestHandler(ciImage: decoded.image)
-    try? handler.perform([faceRects, quality, saliency, horizon, featurePrint])
+    try? handler.perform([faceRects, quality, saliency, horizon, featurePrint,
+                          bodyPose])
     timing["vision"] = ms(since: tVision)
 
     // --- Frame sharpness ---------------------------------------------------
@@ -70,6 +74,24 @@ public func analyze(url: URL, scale: Double) throws -> AnalyzeOut {
         embeddingDim = fp.elementCount
     }
 
+    // Raw joints only — normalization is the engine's job so both analyzers
+    // agree on measurements, not on derived vectors (design 05 §4).
+    var poses: [PoseOut] = []
+    for obs in (bodyPose.results ?? []) {
+        guard let points = try? obs.recognizedPoints(.all) else { continue }
+        var joints: [String: [Double]] = [:]
+        var confSum = 0.0
+        for (name, point) in points where point.confidence > 0 {
+            joints[name.rawValue.rawValue] = [Double(point.location.x),
+                                    Double(point.location.y),
+                                    Double(point.confidence)]
+            confSum += Double(point.confidence)
+        }
+        guard !joints.isEmpty else { continue }
+        poses.append(PoseOut(joints: joints,
+                             confidence: confSum / Double(joints.count)))
+    }
+
     return AnalyzeOut(
         path: url.path,
         decodeMode: decoded.mode,
@@ -77,6 +99,7 @@ public func analyze(url: URL, scale: Double) throws -> AnalyzeOut {
         frame: frame,
         saliency: saliencyOut,
         faces: faces,
+        pose: poses,
         embedding: embedding,
         embeddingDim: embeddingDim,
         timingMs: timing)

@@ -29,6 +29,9 @@ final class ReviewModel {
     var comparing = false  // C — synced compare sheet
     var showExport = false
     var showSettings = false
+    /// D — the style screens (design 08 §7a): look families + the predicted
+    /// develop settings for this shoot, and the XMP write for them.
+    var showStyle = false
     /// ? — the shortcut list. Discoverable in-app rather than README-only:
     /// an overlay the user can't name (the S heatmap) is an overlay they
     /// won't trust.

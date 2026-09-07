@@ -192,7 +192,16 @@ _MIGRATION_2 = """
 ALTER TABLE library ADD COLUMN volume_rel_path TEXT;
 """
 
-MIGRATIONS: list[str] = [_MIGRATION_1, _MIGRATION_2]
+# Body pose (design 03 §4 `pose`): raw joints as measured, one JSON array per
+# photo. Kept on `analysis` because it IS a measurement — expensive,
+# profile-independent, immutable per engine_version (design 01). The derived
+# pose *vector* is not stored: it is cheap to recompute and belongs to
+# grouping's semantics (design 05 §4).
+_MIGRATION_3 = """
+ALTER TABLE analysis ADD COLUMN pose TEXT;
+"""
+
+MIGRATIONS: list[str] = [_MIGRATION_1, _MIGRATION_2, _MIGRATION_3]
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:

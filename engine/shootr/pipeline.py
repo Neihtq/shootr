@@ -13,7 +13,7 @@ import sqlite3
 import struct
 from datetime import datetime, timezone, datetime as _dt
 
-from . import culling, flags, grouping, scoring
+from . import culling, flags, grouping, pose, scoring
 
 
 def _now() -> str:
@@ -30,6 +30,8 @@ def _measurements_for(row: sqlite3.Row, faces: list[sqlite3.Row],
                       ) -> scoring.Measurements:
     frame = json.loads(row["frame"]) if row["frame"] else {}
     saliency = json.loads(row["saliency"]) if row["saliency"] else None
+    poses = json.loads(row["pose"]) if row.keys().__contains__("pose") \
+        and row["pose"] else []
     ref, pop_n = population or (None, None)
 
     face_ms = []
@@ -65,6 +67,9 @@ def _measurements_for(row: sqlite3.Row, faces: list[sqlite3.Row],
     detected = flags.detect_flags(
         face_dicts, primary.idx if primary else None, sal_bbox,
         frame.get("horizon_angle"))
+    # Pose-derived flag (04 §2.4): a cut-sensitive joint on the frame edge.
+    if cut := pose.limb_cut_at_joint(poses):
+        detected.append(f"limb_cut_at_joint:{cut}")
     return scoring.Measurements(
         frame=m.frame, faces=m.faces, saliency_bbox=m.saliency_bbox,
         composition_flags=detected, in_bracket=in_bracket)
@@ -114,7 +119,8 @@ def score_shoot(conn: sqlite3.Connection, shoot_id: int) -> int:
     n = 0
     with conn:
         for row in conn.execute(
-            "SELECT p.id, p.camera_model, a.frame, a.saliency FROM photo p "
+            "SELECT p.id, p.camera_model, a.frame, a.saliency, a.pose "
+            "FROM photo p "
             "JOIN analysis a ON a.photo_id = p.id WHERE p.shoot_id = ?",
             (shoot_id,),
         ).fetchall():
@@ -151,7 +157,8 @@ def group_shoot(conn: sqlite3.Connection, shoot_id: int) -> int:
     for row in conn.execute(
         "SELECT p.id, p.captured_at, p.subsec, p.exposure_bias, "
         "(SELECT COUNT(*) FROM face f WHERE f.photo_id = p.id) AS n_faces, "
-        "e.vec, e.dim FROM photo p "
+        "a.pose, e.vec, e.dim FROM photo p "
+        "LEFT JOIN analysis a ON a.photo_id = p.id "
         "LEFT JOIN embedding e ON e.photo_id = p.id AND e.kind = 'scene' "
         "WHERE p.shoot_id = ? AND p.captured_at IS NOT NULL "
         "ORDER BY p.captured_at, p.subsec",
@@ -160,6 +167,12 @@ def group_shoot(conn: sqlite3.Connection, shoot_id: int) -> int:
         emb = None
         if row["vec"] is not None and row["dim"]:
             emb = struct.unpack(f'{row["dim"]}f', row["vec"])
+        pose_vec, pose_conf = None, 0.0
+        if row["pose"]:
+            # Abstains (None) for seated/occluded/cropped bodies — those stay
+            # unassigned rather than forming a junk cluster (design 05 §4).
+            if built := pose.best_pose(json.loads(row["pose"])):
+                pose_vec, pose_conf = built
         photos.append(grouping.PhotoFeatures(
             photo_id=row["id"],
             captured_at=_dt.fromisoformat(row["captured_at"]),
@@ -167,14 +180,20 @@ def group_shoot(conn: sqlite3.Connection, shoot_id: int) -> int:
             exposure_bias=row["exposure_bias"] or 0.0,
             embedding=emb,
             face_count=row["n_faces"],
+            pose=pose_vec,
+            pose_confidence=pose_conf,
         ))
 
     shots = grouping.group_shots(photos, profile=profile)
     scenes = grouping.group_scenes(photos)
+    # Portrait only (05 §4): events get pose from shot groups already, and for
+    # landscape/street it is meaningless.
+    poses = grouping.group_poses(photos) if profile == "portrait" else []
 
     with conn:
         conn.execute('DELETE FROM "group" WHERE shoot_id = ?', (shoot_id,))
-        for level, groups in (("scene", scenes), ("shot", shots)):
+        for level, groups in (("scene", scenes), ("shot", shots),
+                              ("pose", poses)):
             for g in groups:
                 cur = conn.execute(
                     'INSERT INTO "group" (shoot_id, level, is_bracket) '

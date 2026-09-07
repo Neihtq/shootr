@@ -180,6 +180,64 @@ export interface ExportPreview {
   backup_dir: string;
 }
 
+/** GET /api/style/families (design 08 §3). Discovered from the user's own
+ * edits, never assumed — read-only in the UI. `median` is the family's
+ * median edit as the ENGINE computed it; the client only renders it. */
+export interface StyleFamily {
+  id: number;
+  size: number;
+  /** Engine-written trait label, e.g. "+Highlights2012 −Contrast2012". */
+  traits: string;
+  /** Feed straight to the thumbnail endpoint — the family's face. */
+  sample_photo_ids: number[];
+  median: Record<string, number>;
+}
+
+/** Engine abstention reasons (api.py + style.predict). An abstention is a
+ * state with a cause; it is NEVER an empty parameter list meaning "no
+ * changes needed" (design 08 §7a, README rule 8). */
+export type StyleAbstainReason =
+  | "low_confidence"
+  | "no_similar_history"
+  | "family_too_small"
+  | "not_analyzed";
+
+/** One photo's entry in the predict preview. `params`, `confidence` and
+ * `neighbor_photo_ids` are absent on the `not_analyzed` path and empty on
+ * the other abstentions — hence optional, and hence the UI must key off
+ * `abstained`, not off "params is empty". */
+export interface StylePrediction {
+  photo_id: number;
+  abstained: boolean;
+  /** null when a prediction was made. */
+  reason: StyleAbstainReason | string | null;
+  confidence?: number;
+  params?: Record<string, number>;
+  /** The history photos the blend came from — the whole reason k-NN was
+   * chosen over a trained model (design 08 §4). Present on
+   * `low_confidence` too: "closest we had, still not close enough". */
+  neighbor_photo_ids?: number[];
+}
+
+/** POST /api/shoots/{id}/style/predict — a PREVIEW. Nothing is written. */
+export interface StylePredictResult {
+  /** Resolved family: the one requested, or the engine's auto-suggestion
+   * when the request omitted it. */
+  family: number;
+  process_version: string;
+  predictions: StylePrediction[];
+}
+
+/** POST /api/shoots/{id}/style/export-develop. Conflicts are sidecars that
+ * already hold the user's own develop settings: reported, skipped, and there
+ * is deliberately no override parameter to send (design 08 §6). */
+export interface StyleExportResult {
+  written: number[];
+  abstained: { photo_id: number; reason: string }[];
+  conflicts: { photo_id: number; path: string }[];
+  note: string;
+}
+
 export interface ApiError {
   code: string;
   message: string;

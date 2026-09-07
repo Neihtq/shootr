@@ -34,10 +34,12 @@ export function GroupReview({
   shootId,
   selectionId,
   onOpenExport,
+  onOpenStyle,
 }: {
   shootId: number;
   selectionId: number | null;
   onOpenExport: () => void;
+  onOpenStyle: () => void;
 }) {
   const { data: groups } = useGroups(shootId);
   const { data: selection } = useSelection(selectionId);
@@ -205,6 +207,13 @@ export function GroupReview({
                 </span>
               )}
               <span className="ml-auto" />
+              <button
+                onClick={onOpenStyle}
+                title="Preview predicted develop settings for this shoot's picks"
+                className="rounded border border-neutral-700 px-2 py-0.5 hover:bg-neutral-800"
+              >
+                Style…
+              </button>
               <button
                 onClick={onOpenExport}
                 className="rounded border border-neutral-700 px-2 py-0.5 hover:bg-neutral-800"

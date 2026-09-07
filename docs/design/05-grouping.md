@@ -128,6 +128,14 @@ Genuinely weak when the subject is seated, occluded, or tightly cropped (no hips
 visible → normalization fails). Abstain rather than emit a garbage cluster: photos with
 insufficient pose confidence go unassigned, not into a junk group.
 
+**Implemented 2026-09-07** in `shootr.pose` (not in either analyzer: both emit *raw*
+joints so they only have to agree on measurements, never on derived vectors). Abstains
+when a torso is unavailable, when the torso is smaller than 2% of frame height, or when
+fewer than half the vector joints clear confidence 0.3 — missing joints fill with the hip
+origin, so a sparse skeleton would otherwise look like a distinct pose and cluster with
+every other sparse frame. Measured on 60 real event frames: 53 detect a body, 41 yield a
+usable vector, i.e. ~23% of detected bodies abstain, as the paragraph above predicts.
+
 ---
 
 ## 5. Person identity

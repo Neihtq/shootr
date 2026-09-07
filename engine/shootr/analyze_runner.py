@@ -196,10 +196,12 @@ def _persist(conn: sqlite3.Connection, photo_id: int, result: dict) -> None:
         conn.execute(
             "INSERT OR REPLACE INTO analysis "
             "(photo_id, engine_version, decode_mode, frame, saliency, "
-            "analyzed_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+            "pose, analyzed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
             (photo_id, result.get("engine_version", "?"),
              result.get("decode_mode", "?"), json.dumps(frame),
-             json.dumps(result.get("saliency"))),
+             json.dumps(result.get("saliency")),
+             json.dumps(result.get("pose")) if result.get("pose") else None),
         )
         conn.execute("DELETE FROM face WHERE photo_id = ?", (photo_id,))
         for f in result.get("faces", []):
