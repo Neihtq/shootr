@@ -10,16 +10,21 @@
  * The per-parameter opt-out is enforced by the engine on this path, so the
  * excluded parameters are simply reported as not written — the dialog states
  * the write's real scope, it does not filter anything itself.
+ *
+ * The write names its source: the model the preview ran with is sent by id, so
+ * what lands in the files comes from the model whose numbers the user just
+ * read, and the engine echoes it back in the result (design 08 §7b).
  */
 
 import { useState } from "react";
 import { useStyleExportDevelop } from "../api/hooks";
-import type { StyleExportResult } from "../api/types";
-import { abstainCopy, paramLabel } from "../style";
+import type { StyleExportResult, StyleModel } from "../api/types";
+import { abstainCopy, methodTitle, paramLabel } from "../style";
 
 export function StyleWriteDialog({
   shootId,
   family,
+  model,
   processVersion,
   photoIds,
   abstainCount,
@@ -30,6 +35,9 @@ export function StyleWriteDialog({
   shootId: number;
   /** Resolved family from the preview — never re-derived here. */
   family: number;
+  /** The model that produced the preview, or null when the engine used its
+   * built-in default (there is then no id to pin the write to). */
+  model: StyleModel | null;
   processVersion: string;
   /** Photos the engine produced a prediction for, in preview order. */
   photoIds: number[];
@@ -48,7 +56,13 @@ export function StyleWriteDialog({
   const run = () => {
     setError(null);
     write.mutate(
-      { family, photo_ids: photoIds },
+      {
+        family,
+        photo_ids: photoIds,
+        // Omitted when there is no model: the engine then uses the active one,
+        // exactly as it did for the preview.
+        ...(model === null ? {} : { model_id: model.id }),
+      },
       {
         onSuccess: (r) => setResult(r),
         onError: (e) => setError(e.message),
@@ -69,6 +83,22 @@ export function StyleWriteDialog({
               <li>
                 ✓ {photoIds.length} photo{photoIds.length === 1 ? "" : "s"} to
                 write — family {family}, Process Version {processVersion}
+              </li>
+              <li className="text-neutral-400">
+                {/* Which predictor's values are about to land in the files. */}
+                {model === null ? (
+                  <>
+                    From the engine's built-in default (nearest edits across all
+                    imported history) — no style model was chosen.
+                  </>
+                ) : (
+                  <>
+                    From your model <span className="text-neutral-200">{model.name}</span>{" "}
+                    — {methodTitle(model.method)}, learned{" "}
+                    {model.trained_at ?? "never"} from {model.history_n} edited
+                    photo{model.history_n === 1 ? "" : "s"}.
+                  </>
+                )}
               </li>
               {abstainCount > 0 && (
                 <li className="text-neutral-400">
@@ -143,7 +173,12 @@ export function StyleWriteDialog({
           <>
             <div className="mb-3">
               Wrote {result.written.length} sidecar
-              {result.written.length === 1 ? "" : "s"}.
+              {result.written.length === 1 ? "" : "s"}
+              {/* The engine names the model it used; relayed so the record of
+                  the write says where the values came from. */}
+              {result.model !== null
+                ? ` from ${result.model.name} (${result.model.method}).`
+                : " from the engine's built-in default predictor."}
             </div>
 
             {result.excluded_params.length > 0 && (

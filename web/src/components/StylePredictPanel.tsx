@@ -1,4 +1,4 @@
-/** Screen 2 — Predict for a shoot (design 08 §7a).
+/** Screen 2 — Predict for a shoot (design 08 §7a, §7b).
  *
  * A PREVIEW, and presented as one: nothing is written until the user opens the
  * write dialog and confirms. Per photo it renders the engine's predicted
@@ -7,24 +7,34 @@
  * over a trained model (design 08 §4). Abstentions are first-class states with
  * the engine's reason, never an empty parameter list (design 08 §7a).
  *
+ * Which model produced the predictions is part of that: the response names it,
+ * and a FITTED model has no neighbours to show, so its rows carry the
+ * provenance the engine does give — "fitted from N edited photos" — instead of
+ * an empty strip that would read as missing data. A fitted prediction also has
+ * no confidence to report; absent is rendered as absent, never as "null"
+ * (design 08 §7b, README rule 8).
+ *
  * No arithmetic on predictions happens here (design 10 §1): the family is the
  * engine's, the confidence is the engine's, the abstain/predict verdict is the
- * engine's. The per-parameter opt-out is the engine's too — it is stored
- * server-side and it changes what is written, so the checkboxes below are a
- * view of `GET /api/style/preferences`, not a local display filter.
+ * engine's, the model is the engine's. The per-parameter opt-out is the
+ * engine's too — it is stored server-side and it changes what is written, so
+ * the checkboxes below are a view of `GET /api/style/preferences`, not a local
+ * display filter.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { errorCode, thumbUrl } from "../api/client";
 import {
   useSetStylePreferences,
+  useStyleModels,
   useStylePrediction,
   useStylePreferences,
 } from "../api/hooks";
-import type { StyleFamily, StylePrediction } from "../api/types";
+import type { StyleFamily, StyleModel, StylePrediction } from "../api/types";
 import {
   abstainCopy,
   formatParam,
+  methodTitle,
   paramLabel,
   paramUnit,
   prefErrorCopy,
@@ -47,21 +57,49 @@ const PREDICT_ERROR_COPY: Record<string, string> = {
     "These photos have no scene embeddings yet. Analyze the shoot first; similarity is what the prediction is built on.",
   insufficient_history:
     "Not enough imported edit history to predict from — import a Lightroom catalog with your edits.",
+  model_not_trained:
+    "That style model has not been learned yet, so it has nothing to predict with. Learn it in Style models above, or choose another model.",
+  file_missing:
+    "The engine has no such style model — it may have been deleted in another window. Choose a model again.",
 };
 
 export function StylePredictPanel({
   shootId,
   families,
+  modelId,
+  onModelChange,
+  onModelResolved,
   onFamilyResolved,
 }: {
   shootId: number;
   families: StyleFamily[];
+  /** null = send no `model_id`, so the engine uses its active model (§7b). */
+  modelId: number | null;
+  onModelChange: (modelId: number | null) => void;
+  /** Reports the model the engine actually used (null = its built-in default)
+   * so the manager above can mark it. */
+  onModelResolved?: (modelId: number | null) => void;
   /** Lets the families list above highlight the look actually in use. */
   onFamilyResolved?: (family: number) => void;
 }) {
   // null = omit `family` from the request so the ENGINE suggests one (§3).
   const [family, setFamily] = useState<number | null>(null);
-  const { data, error, isFetching } = useStylePrediction(shootId, family);
+  const { data: models } = useStyleModels();
+  // A selected id that no longer exists (deleted elsewhere) falls back to the
+  // active model rather than asking the engine for a missing row.
+  // While the list is still loading, the selection is taken at face value —
+  // second-guessing it would fire a throwaway request against another model.
+  const effectiveModelId =
+    modelId === null ||
+    models === undefined ||
+    models.some((m) => m.id === modelId)
+      ? modelId
+      : null;
+  const { data, error, isFetching } = useStylePrediction(
+    shootId,
+    family,
+    effectiveModelId,
+  );
   const { data: prefs } = useStylePreferences();
   const setPrefs = useSetStylePreferences();
   const [prefError, setPrefError] = useState<string | null>(null);
@@ -74,6 +112,14 @@ export function StylePredictPanel({
   useEffect(() => {
     if (resolved !== null) onFamilyResolved?.(resolved);
   }, [resolved, onFamilyResolved]);
+
+  // Which model the engine actually used. Reported upward only once a response
+  // exists: before that, "no model" would be a guess, not a fact.
+  const usedModel = data?.model ?? null;
+  const hasData = data !== undefined;
+  useEffect(() => {
+    if (hasData) onModelResolved?.(usedModel?.id ?? null);
+  }, [hasData, usedModel, onModelResolved]);
 
   const predictions = data?.predictions ?? NO_PREDICTIONS;
   const predicted = predictions.filter((p) => !p.abstained);
@@ -156,6 +202,43 @@ export function StylePredictPanel({
         dialog states the counts before anything touches disk.
       </div>
 
+      {/* Which model predicts. "Active model" is the engine's own answer and is
+          labelled as such — defaulting to a particular model here would be the
+          client holding a second opinion about which one matters (§7b). */}
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+        <label className="flex items-center gap-1.5 text-neutral-400">
+          Model
+          <select
+            value={effectiveModelId === null ? "active" : String(effectiveModelId)}
+            onChange={(e) => {
+              const v = e.target.value;
+              onModelChange(v === "active" ? null : Number(v));
+              // Family numbers are relative to the history the model clusters,
+              // so a family pinned under one model would mean a different look
+              // under another. Back to the engine's suggestion.
+              setFamily(null);
+              setShown(PAGE);
+            }}
+            className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-200"
+          >
+            <option value="active">Active model — the engine's choice</option>
+            {(models ?? []).map((m) => (
+              // An unlearned model is listed but not selectable: it exists, and
+              // hiding it would make the list disagree with the manager above.
+              <option key={m.id} value={m.id} disabled={!m.trained}>
+                {m.name} — {m.method}
+                {m.is_active ? " (active)" : ""}
+                {m.trained ? "" : " — not learned yet"}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {isFetching && <span className="text-neutral-500">predicting…</span>}
+      </div>
+
+      {data && <ModelProvenance model={usedModel} historyUsed={data.history?.used} />}
+
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
         <label className="flex items-center gap-1.5 text-neutral-400">
           Look family
@@ -190,8 +273,6 @@ export function StylePredictPanel({
             )}
           </span>
         )}
-
-        {isFetching && <span className="text-neutral-500">predicting…</span>}
 
         <span className="ml-auto" />
 
@@ -238,6 +319,17 @@ export function StylePredictPanel({
             excluded parameter are still shown below, struck through, so you can
             see what you turned down rather than losing sight of it.
           </div>
+
+          {usedModel !== null && !usedModel.explains_by_neighbours && (
+            // True of the fitted path only: the engine drops excluded
+            // parameters before predicting them, so there is no withheld number
+            // to strike through. Better said than left as a puzzle.
+            <div className="mb-2 text-[11px] text-neutral-500">
+              With a fitted model the engine leaves excluded parameters out
+              before it predicts them, so there is no withheld value to show:
+              they are simply absent below, not struck through.
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             {paramNames.map((name) => {
@@ -341,6 +433,10 @@ export function StylePredictPanel({
         <StyleWriteDialog
           shootId={shootId}
           family={data.family}
+          // The model the PREVIEW ran with, so the write comes from the model
+          // whose numbers the user just read — not from whatever happens to be
+          // active by the time they confirm.
+          model={usedModel}
           processVersion={data.process_version}
           photoIds={predicted.map((p) => p.photo_id)}
           abstainCount={abstained.length}
@@ -353,6 +449,66 @@ export function StylePredictPanel({
   );
 }
 
+/** Which model produced this preview, stated from the response — not from the
+ * picker, so it stays true while a re-predict is in flight and after an
+ * activate happened in another window.
+ *
+ * `model: null` is its own statement: the engine ran its built-in default
+ * because no model was chosen, which is not the same as a model the user
+ * picked (design 08 §7b). */
+function ModelProvenance({
+  model,
+  historyUsed,
+}: {
+  model: StyleModel | null;
+  historyUsed?: number;
+}) {
+  if (model === null) {
+    return (
+      <div className="mb-3 rounded border border-neutral-800 p-2 text-[11px] text-neutral-400">
+        <span className="text-neutral-300">No style model — engine default.</span>{" "}
+        These predictions come from the engine's built-in fallback: nearest edits
+        across all your imported history
+        {historyUsed !== undefined && ` (${historyUsed} edited photos)`}. It
+        works, but nobody chose it. Create a model above to fix the method and
+        the libraries deliberately, and to get metrics you can compare.
+      </div>
+    );
+  }
+  return (
+    <div className="mb-3 rounded border border-neutral-800 p-2 text-[11px] text-neutral-400">
+      <span className="text-neutral-300">
+        Predicted by {model.name}
+        {model.is_active && " (active)"}
+      </span>{" "}
+      — {methodTitle(model.method)}. Learned {model.trained_at ?? "never"} from{" "}
+      {model.history_n} edited photo{model.history_n === 1 ? "" : "s"}
+      {model.process_version && `, Process Version ${model.process_version}`}
+      {historyUsed !== undefined &&
+        historyUsed !== model.history_n &&
+        `. Its libraries now hold ${historyUsed} edited photos — relearn to measure against those`}
+      .
+      {!model.explains_by_neighbours && (
+        <div className="mt-1 text-amber-200/90">
+          This model was fitted, so no prediction below can name the photos
+          behind a value: each one reports how much history it was fitted from
+          instead. It also reports no confidence number — the confidence gate is
+          a property of retrieval, and this method has none, so rows show no
+          confidence rather than a made-up one. The §6 guardrails still apply:
+          values are clamped to the range seen in your history.
+        </div>
+      )}
+      {model.library_ids.length > 0 && (
+        <div className="mt-1 text-neutral-500">
+          Family numbers here come from clustering this model's own libraries, so
+          they need not line up with the family list above, which clusters all
+          imported history.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PredictionRow({ pred }: { pred: StylePrediction }) {
   const params = Object.entries(pred.params ?? {});
   // Predicted, then withheld because the user said so. Rendered — not dropped,
@@ -360,6 +516,13 @@ function PredictionRow({ pred }: { pred: StylePrediction }) {
   // purpose so the user can see what they turned down (design 08 §7a).
   const excluded = Object.entries(pred.excluded ?? {});
   const neighbors = pred.neighbor_photo_ids ?? [];
+  // The row's own evidence decides how it explains itself: a fitted prediction
+  // carries `fitted_from_history_n` and an empty neighbour list, so this is
+  // read off the payload rather than off the model's method string.
+  const fittedFrom = pred.fitted_from_history_n;
+  // null (a fitted method) and undefined (absent) both mean "no confidence to
+  // show" — and neither may render as a number or as the word "null".
+  const confidence = pred.confidence ?? null;
 
   return (
     <div
@@ -383,14 +546,18 @@ function PredictionRow({ pred }: { pred: StylePrediction }) {
             <span className="rounded bg-amber-950 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
               no confident prediction — needs manual edit
             </span>
-          ) : (
+          ) : confidence !== null ? (
             <span className="text-neutral-400">
               confidence{" "}
               <span className="font-mono text-neutral-300">
-                {pred.confidence?.toFixed(2) ?? "—"}
+                {confidence.toFixed(2)}
               </span>
             </span>
-          )}
+          ) : fittedFrom !== undefined ? (
+            // A fitted method has no retrieval confidence. Say what it is
+            // instead of showing an empty or invented number.
+            <span className="text-neutral-500">fitted prediction</span>
+          ) : null}
         </div>
 
         {pred.abstained ? (
@@ -401,10 +568,10 @@ function PredictionRow({ pred }: { pred: StylePrediction }) {
             <span className="text-neutral-400">
               Nothing will be written for this photo.
             </span>
-            {pred.confidence !== undefined && (
+            {confidence !== null && (
               <span className="text-neutral-500">
                 {" "}
-                (engine confidence {pred.confidence.toFixed(2)}, below its gate)
+                (engine confidence {confidence.toFixed(2)}, below its gate)
               </span>
             )}
           </div>
@@ -421,7 +588,7 @@ function PredictionRow({ pred }: { pred: StylePrediction }) {
               </span>
             ))}
           </div>
-        ) : (
+        ) : excluded.length > 0 ? (
           // Predicted, but every value belongs to a parameter the user
           // excluded — say so, rather than showing an empty row that reads as
           // "no edit needed".
@@ -429,6 +596,14 @@ function PredictionRow({ pred }: { pred: StylePrediction }) {
             {excluded.length} predicted parameter
             {excluded.length === 1 ? "" : "s"}, all of them ones you excluded —
             nothing from this prediction will be written.
+          </div>
+        ) : (
+          // No values and nothing withheld either. Still not "no changes
+          // needed" (README rule 8) — the model simply had nothing to give.
+          <div className="text-[11px] text-neutral-500">
+            The model returned no parameter values for this photo, so nothing
+            will be written for it. That is not the same as "this photo needs no
+            edit".
           </div>
         )}
 
@@ -466,6 +641,26 @@ function PredictionRow({ pred }: { pred: StylePrediction }) {
         )}
 
       </div>
+
+      {neighbors.length === 0 && fittedFrom !== undefined && (
+        // A fitted method has no neighbours to show, so the strip is replaced
+        // by the provenance the engine DOES give (design 08 §7b). Leaving the
+        // space blank would read as thumbnails that failed to load.
+        <div className="w-44 shrink-0">
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
+            Where this came from
+          </div>
+          <div className="text-[11px] text-neutral-400">
+            Fitted from {fittedFrom} edited photo
+            {fittedFrom === 1 ? "" : "s"} of yours.
+          </div>
+          <div className="mt-1 text-[10px] text-neutral-500">
+            No neighbour photos: a fitted model cannot point at the photos a
+            value came from. This is the whole of what it can say about its
+            source.
+          </div>
+        </div>
+      )}
 
       {neighbors.length > 0 && (
         <div className="shrink-0">

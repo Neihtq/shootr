@@ -26,6 +26,8 @@ import type {
   ShootProposal,
   StyleExportResult,
   StyleFamily,
+  StyleMethod,
+  StyleModel,
   StylePredictResult,
   StylePreferences,
 } from "./types";
@@ -202,6 +204,83 @@ export const useStyleFamilies = () =>
     retry: false,
   });
 
+/** -- style models (design 08 §7b) -----------------------------------------
+ *
+ * A model is a user-created object with four explicit operations: learn
+ * (create), relearn (train), compare (read `metrics`), choose (activate).
+ * Nothing here decides anything: the metrics are the engine's harness output
+ * and the active model is engine state, so both clients read the same answer.
+ */
+
+/** The method registry. Static for a given engine build, so it is fetched
+ * once and kept — it carries the fits / explains-by-neighbours facts the
+ * create form has to state. */
+export const useStyleMethods = () =>
+  useQuery({
+    queryKey: ["style", "methods"],
+    queryFn: () => get<StyleMethod[]>("/api/style/methods"),
+    staleTime: Infinity,
+  });
+
+export const useStyleModels = () =>
+  useQuery({
+    queryKey: ["style", "models"],
+    queryFn: () => get<StyleModel[]>("/api/style/models"),
+  });
+
+/** Create AND learn, in one explicit action (the engine does both).
+ *
+ * Invalidated on settle, not on success: a 409 `insufficient_history` still
+ * leaves the model row behind (the engine keeps it, and its `detail.model_id`
+ * says which), so the list has changed even though the call failed. */
+export const useCreateStyleModel = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      name: string;
+      method: string;
+      library_ids: number[];
+      params?: Record<string, number | null>;
+    }) => post<StyleModel>("/api/style/models", { params: {}, ...body }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["style"] }),
+  });
+};
+
+/** Relearn: same model, current history. The user decides when their style
+ * has moved — the engine never retrains on import. */
+export const useTrainStyleModel = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (modelId: number) =>
+      post<StyleModel>(`/api/style/models/${modelId}/train`),
+    // Relearning changes what a prediction would be, so previews go too.
+    onSettled: () => qc.invalidateQueries({ queryKey: ["style"] }),
+  });
+};
+
+/** Choose which model predicts by default. Engine state: activating here
+ * changes what the native client predicts with too. */
+export const useActivateStyleModel = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (modelId: number) =>
+      post<StyleModel>(`/api/style/models/${modelId}/activate`),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["style"] }),
+  });
+};
+
+/** Deletes the model row only. No photo, sidecar or edit is touched — a
+ * model is a predictor, not the user's work (README rule 2). Callers confirm
+ * first and say so. */
+export const useDeleteStyleModel = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (modelId: number) =>
+      del<{ deleted: number }>(`/api/style/models/${modelId}`),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["style"] }),
+  });
+};
+
 /** The per-parameter opt-out (design 08 §6, §7a). Server state, not a
  * browser setting: it decides what gets written into the user's files, so
  * both clients must read the same answer. */
@@ -238,16 +317,22 @@ export const useSetStylePreferences = () => {
  * `family: null` lets the engine auto-suggest (design 08 §3); the resolved
  * family comes back in the response. `photo_ids` is omitted so the engine
  * uses the shoot's latest selection picks — the client does not decide the
- * scope of a cull. */
+ * scope of a cull.
+ *
+ * `modelId: null` omits `model_id` entirely so the engine uses the ACTIVE
+ * model (design 08 §7b) — sending a guessed id would be the client choosing
+ * the predictor. The model that actually ran comes back in `model`. */
 export const useStylePrediction = (
   shootId: number | null,
   family: number | null,
+  modelId: number | null,
 ) =>
   useQuery({
-    queryKey: ["style", "predict", shootId, family],
+    queryKey: ["style", "predict", shootId, family, modelId],
     queryFn: () =>
       post<StylePredictResult>(`/api/shoots/${shootId}/style/predict`, {
         family,
+        ...(modelId === null ? {} : { model_id: modelId }),
       }),
     enabled: shootId !== null,
     retry: false,
@@ -255,11 +340,19 @@ export const useStylePrediction = (
 
 /** Writes predicted `crs:` values to XMP sidecars via the §07 Rule-2
  * protocol. Abstentions write nothing; conflicting sidecars are skipped and
- * reported — the endpoint takes no override flag, by design. */
+ * reported — the endpoint takes no override flag, by design.
+ *
+ * `model_id` must be the one the preview ran with, so what is written comes
+ * from the model whose numbers the user just read; omitted means the active
+ * model, exactly as in the preview. */
 export const useStyleExportDevelop = (shootId: number | null) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { family: number; photo_ids: number[] }) =>
+    mutationFn: (body: {
+      family: number;
+      photo_ids: number[];
+      model_id?: number;
+    }) =>
       post<StyleExportResult>(
         `/api/shoots/${shootId}/style/export-develop`,
         body,

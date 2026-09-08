@@ -193,6 +193,89 @@ export interface StyleFamily {
   median: Record<string, number>;
 }
 
+/** GET /api/style/methods — the method registry (design 08 §7b).
+ *
+ * The two booleans are the whole trade-off and the client must state it, not
+ * hide it: `fits` = the method has a fitting step, so new history only counts
+ * after a relearn; `explains_by_neighbours` = a prediction can name the
+ * photos it was copied from. No method is privileged and none is
+ * auto-selected — the engine measures, the user chooses. */
+export interface StyleMethod {
+  method: string;
+  /** The engine's knobs for this method. `null` for a knob the engine picks
+   * while learning (ridge's λ is chosen by cross-validation). */
+  default_params: Record<string, number | null>;
+  fits: boolean;
+  explains_by_neighbours: boolean;
+}
+
+/** One parameter's row in a model's evaluation (`metrics.per_param`).
+ *
+ * `mae` is the model's error and `baseline_mae` the family-median baseline's,
+ * both in the parameter's own units, both measured by the engine's harness.
+ * The client renders the pair; it never combines them into a score of its own
+ * (design 10 §1) — the engine already publishes its own tally in
+ * `beats_median_on`. `baseline_mae: null` = the baseline had nothing to
+ * compare on, which is not the same as a tie. */
+export interface StyleParamMetric {
+  mae: number;
+  baseline_mae: number | null;
+  n: number;
+}
+
+/** A model's evaluation as the §7 harness measured it FOR THAT MODEL, which
+ * is what makes two models comparable at all.
+ *
+ * Every field is optional because an untrained model carries `{}` — a model
+ * that exists but was never learned (the engine keeps the row when a create
+ * hits `insufficient_history`) has no metrics, and inventing zeros for it
+ * would read as "measured, and bad" (README rule 8). */
+export interface StyleModelMetrics {
+  history_n?: number;
+  families?: number;
+  /** Fraction of held-out photos the method produced a prediction for. */
+  coverage?: number;
+  /** The engine's own count of parameters where it beat the family median —
+   * the engine's tally, not one the client recomputes. */
+  beats_median_on?: number;
+  params_scored?: number;
+  held_out?: boolean;
+  /** `shot_group` = whole bursts were held out together; `photo` = split
+   * photo by photo, which lets burst siblings straddle the split and flatters
+   * retrieval (design 08 §7b). Rendered, because it changes what the numbers
+   * below mean. */
+  held_out_by?: "shot_group" | "photo" | string;
+  /** The ridge λ actually used (chosen by cross-validation when not pinned);
+   * null for methods that have none. */
+  lambda?: number | null;
+  per_param?: Record<string, StyleParamMetric>;
+}
+
+/** A style model: the user's named, persisted choice of predictor (design 08
+ * §7b). Created explicitly — nothing is learned on import. */
+export interface StyleModel {
+  id: number;
+  name: string;
+  method: string;
+  /** Scope: which libraries the edit history comes from. Empty = all of
+   * them, which is a real answer and not "unset". */
+  library_ids: number[];
+  params: Record<string, number | null>;
+  metrics: StyleModelMetrics;
+  history_n: number;
+  /** The single process version the history was narrowed to before learning
+   * (design 08 §6). */
+  process_version: string | null;
+  /** Engine timestamp, or null when the model was created but never learned. */
+  trained_at: string | null;
+  trained: boolean;
+  is_active: boolean;
+  /** Whether predictions from this model can name neighbour photos. False for
+   * a fitted method: it reports how much history it was fitted from instead,
+   * and the UI must render that rather than an empty thumbnail strip. */
+  explains_by_neighbours: boolean;
+}
+
 /** Engine abstention reasons (api.py + style.predict). An abstention is a
  * state with a cause; it is NEVER an empty parameter list meaning "no
  * changes needed" (design 08 §7a, README rule 8). */
@@ -200,7 +283,9 @@ export type StyleAbstainReason =
   | "low_confidence"
   | "no_similar_history"
   | "family_too_small"
-  | "not_analyzed";
+  | "not_analyzed"
+  /** A fitted model produced no value at all for this photo. */
+  | "model_abstained";
 
 /** One photo's entry in the predict preview. `params`, `confidence` and
  * `neighbor_photo_ids` are absent on the `not_analyzed` path and empty on
@@ -211,7 +296,10 @@ export interface StylePrediction {
   abstained: boolean;
   /** null when a prediction was made. */
   reason: StyleAbstainReason | string | null;
-  confidence?: number;
+  /** Explicitly `null` from a fitted method — it has no retrieval confidence
+   * to report. Null must read as absent, never as the text "null" or as a
+   * zero-confidence prediction. */
+  confidence?: number | null;
   params?: Record<string, number>;
   /** Guardrails that changed a predicted value, param → the engine's reason
    * (design 08 §6). Rendered, never silent: a withheld exposure push would
@@ -226,6 +314,12 @@ export interface StylePrediction {
    * chosen over a trained model (design 08 §4). Present on
    * `low_confidence` too: "closest we had, still not close enough". */
   neighbor_photo_ids?: number[];
+  /** Present only on predictions from a FITTED method, where the list above
+   * is empty by construction. This is that method's whole answer to "where
+   * did this come from" (design 08 §7b), so its presence — not the model's
+   * method string — is what tells a row to render fitted provenance instead
+   * of a neighbour strip. */
+  fitted_from_history_n?: number;
 }
 
 /** POST /api/shoots/{id}/style/predict — a PREVIEW. Nothing is written. */
@@ -234,9 +328,22 @@ export interface StylePredictResult {
    * when the request omitted it. */
   family: number;
   process_version: string;
+  /** The model these predictions came from, or null meaning no model was
+   * involved: the engine fell back to its built-in k-NN over all imported
+   * history. Null is rendered as exactly that, since "the default happened to
+   * run" is not the same statement as "you chose this model". */
+  model: StyleModel | null;
   /** The user's per-parameter opt-out as the engine applied it to THIS
    * preview — not a client-side filter (design 08 §7a). */
   excluded_params: string[];
+  /** What the engine actually learned from for this preview. Both trailing
+   * fields are COUNTS of history photos the process-version filter set aside,
+   * not flags (verified against the engine's payload). */
+  history?: {
+    used: number;
+    excluded_other_process_version: number;
+    process_version_unverified: number;
+  };
   predictions: StylePrediction[];
 }
 
@@ -258,6 +365,10 @@ export interface StyleExportResult {
   written: number[];
   abstained: { photo_id: number; reason: string }[];
   conflicts: { photo_id: number; path: string }[];
+  /** The model that produced what was written, or null for the engine's
+   * built-in default. Reported back so the record of a write names its
+   * source. */
+  model: StyleModel | null;
   /** The opt-out the engine honoured on this write: these parameters were
    * predicted for some photos and deliberately left out of every sidecar. */
   excluded_params: string[];
