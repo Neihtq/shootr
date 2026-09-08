@@ -349,7 +349,11 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
   defaulted. Guardrails and provenance survive method choice: every method clamps to
   observed history, honours the clip check and opt-outs, and a fitted prediction reports
   `fitted_from_history_n` since it cannot name neighbours
-- Client surface for style models (picker, relearn, compare) — both clients, not started
+- ~~Client surface for style models~~ (2026-09-08, both clients, wording verbatim
+  between them): manager with activate/relearn/delete, create form stating each
+  method's fits-vs-explains trade-off, compare sheet over the engine's `per_param`
+  with no client aggregate or winner mark, and fitted-model provenance replacing the
+  neighbour strip. Native keys: L relearn, N new model, C compare
 - ⚠ **Trained model: measured, and it wins on ONE parameter already**
   (`docs/benchmarks/2026-09-08-knn-vs-trained.md`). Ridge over the scene embedding
   beats k-NN on `Exposure2012` at every history size (0.303 vs 0.344 EV at n=560),

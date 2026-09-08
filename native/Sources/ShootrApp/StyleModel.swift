@@ -36,6 +36,115 @@ final class StyleModel {
     /// client never picks one on its own.
     var familyOverride: Int?
 
+    // MARK: style models (design 08 §7b — the user's objects)
+
+    /// The engine's method registry. Fetched, never hard-coded: whether a
+    /// method fits and whether it can name neighbour photos are the engine's
+    /// statements about it.
+    var methods: [StyleMethod] = []
+    var models: [StyleModelInfo] = []
+    /// Libraries, so a model's `library_ids` can be shown as the paths the
+    /// user recognizes instead of as numbers.
+    var libraries: [Library] = []
+    var loadingModels = false
+    /// A failed GET of the model list. Kept separate from a refused operation:
+    /// one means "we don't know what models you have", the other "your click
+    /// did not happen".
+    var modelsErrorText: String?
+
+    /// Which model predicts. nil = whichever the engine has active, which is
+    /// also what an omitted `model_id` means, so the default is the engine's
+    /// and not a second opinion held here.
+    var selectedModelId: Int?
+
+    /// A refused learn / relearn / activate / delete. Nothing changed when
+    /// this is set.
+    var modelFault: EngineFault?
+    var modelErrorText: String?
+    /// Which operation the refusal came from: `insufficient_history` means
+    /// different things after a create (the row was kept) and after a relearn
+    /// (the model is unchanged), and the message has to say which.
+    var modelOp: StyleCopy.ModelOp = .relearn
+    /// The model an operation is running on, so only its own row shows work.
+    var busyModelId: Int?
+
+    var showCompare = false
+
+    // create form
+    var showCreate = false
+    var newName = ""
+    var newMethod: String?
+    /// Empty = every library, which is what the engine's empty `library_ids`
+    /// means. Not a "select all" the client expands, because the model is
+    /// meant to keep following the libraries the user adds later.
+    var newLibraryIds: Set<Int> = []
+    var creating = false
+    var createFault: EngineFault?
+    var createErrorText: String?
+
+    /// A delete waiting on confirmation.
+    var pendingDelete: StyleModelInfo?
+
+    var selectedModel: StyleModelInfo? {
+        if let selectedModelId {
+            return models.first { $0.id == selectedModelId }
+        }
+        return models.first { $0.isActive }
+    }
+
+    /// The model the engine says produced the predictions on screen. nil means
+    /// it used no model at all — its implicit default.
+    var predictingModel: StyleModelInfo? { prediction?.model }
+
+    /// Models the engine has metrics for — the comparison's columns. The test
+    /// is "did the harness score any parameter", which is the engine's own
+    /// answer, not a judgement about the model.
+    var measuredModels: [StyleModelInfo] {
+        models.filter { $0.metrics.measured }
+    }
+
+    /// Learned or not, a model with no metrics is named rather than dropped:
+    /// silently missing from a comparison reads as "not measured well".
+    var unmeasuredModels: [StyleModelInfo] {
+        models.filter { !$0.metrics.measured }
+    }
+
+    /// The held-out splits present among the compared models. More than one
+    /// means the columns were not measured the same way, which the compare
+    /// sheet says out loud — comparing across splits is the mistake §7b was
+    /// written to prevent.
+    var comparedSplits: [String] {
+        var seen: [String] = []
+        for m in measuredModels {
+            let by = m.metrics.heldOutBy ?? "?"
+            if !seen.contains(by) { seen.append(by) }
+        }
+        return seen
+    }
+
+    /// Every parameter any measured model was scored on, in Lightroom's panel
+    /// order — the row labels of the comparison table. Ordering only; the
+    /// numbers are the engine's and are printed as they arrive.
+    var comparedParamNames: [String] {
+        var names: Set<String> = []
+        for m in measuredModels {
+            if let per = m.metrics.perParam { names.formUnion(per.keys) }
+        }
+        return StyleParams.ordered(names)
+    }
+
+    /// A model's scope in the user's terms: the library paths it learns from,
+    /// or every library when the engine's list is empty. A library id with no
+    /// matching library is named as the id — it was removed from the scan, and
+    /// hiding it would understate the scope.
+    func scopeLabel(_ model: StyleModelInfo) -> String {
+        guard !model.libraryIds.isEmpty else { return StyleCopy.scopeAll }
+        return model.libraryIds.map { id in
+            libraries.first { $0.id == id }?.rootPath
+                ?? StyleCopy.missingLibrary(id)
+        }.joined(separator: ", ")
+    }
+
     /// Cursor in the preview list (↑↓ / J K). Reading position only — it
     /// carries no meaning to the engine.
     var cursor = 0
@@ -155,7 +264,9 @@ final class StyleModel {
 
     func load(shootId: Int) async {
         self.shootId = shootId
-        // Preferences first: they decide what the predictions contain.
+        // Models first: which one predicts decides what the preview means.
+        await loadModels()
+        // Preferences next: they decide what the predictions contain.
         await loadPreferences()
         await loadFamilies()
         // A 409 means there is no history at all; the predict call would
@@ -163,6 +274,166 @@ final class StyleModel {
         if familiesFault?.code != "insufficient_history" {
             await predict()
         }
+    }
+
+    // MARK: style models (learn · relearn · compare · choose, design 08 §7b)
+
+    /// The registry, the models and the libraries their scope names. All three
+    /// are engine state; nothing here is cached across a failure in a way that
+    /// could show a model that no longer exists.
+    func loadModels() async {
+        loadingModels = true
+        defer { loadingModels = false }
+        do {
+            methods = try await api.styleMethods()
+            models = try await api.styleModels()
+            libraries = try await api.libraries()
+            modelsErrorText = nil
+            // No method is preselected. The engine privileges none, and a
+            // radio already filled in would be this client recommending one.
+            // A model that is gone cannot stay selected: the next predict
+            // would 404 on an id the user can no longer see.
+            if let id = selectedModelId,
+               !models.contains(where: { $0.id == id }) {
+                selectedModelId = nil
+            }
+        } catch let error as APIError {
+            modelsErrorText = error.description
+        } catch {
+            modelsErrorText = String(describing: error)
+        }
+    }
+
+    /// Opens the create form on a clean slate: a refusal left over from the
+    /// last attempt must not read as one about the model being described now.
+    func beginCreate() {
+        createFault = nil
+        createErrorText = nil
+        showCreate = true
+    }
+
+    /// Learn: create a model and train it in the engine's one call. A 409
+    /// `insufficient_history` keeps the row, so the list is reloaded either
+    /// way and the message says the model was kept.
+    func createModel() async {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let method = newMethod, !creating else { return }
+        creating = true
+        defer { creating = false }
+        createFault = nil
+        createErrorText = nil
+        do {
+            let created = try await api.createStyleModel(
+                name: name, method: method,
+                libraryIds: newLibraryIds.sorted())
+            await loadModels()
+            // Predict with what was just learned — the point of making it.
+            selectedModelId = created.id
+            showCreate = false
+            newName = ""
+            newLibraryIds = []
+            await predict()
+        } catch let error as APIError {
+            createFault = fault(from: error)
+            createErrorText = error.description
+            // The engine keeps the row on `insufficient_history`, so the list
+            // must show it rather than pretend the click did nothing.
+            await loadModels()
+        } catch {
+            createErrorText = String(describing: error)
+            await loadModels()
+        }
+    }
+
+    /// Relearn: the same model against current history. This is how new shoots
+    /// take effect, on the user's say-so.
+    func relearn(_ id: Int) async {
+        await run(id, op: .relearn) {
+            try await self.api.trainStyleModel(id)
+        }
+    }
+
+    /// Choose: which model predicts when a call names none.
+    func activate(_ id: Int) async {
+        await run(id, op: .activate) {
+            try await self.api.activateStyleModel(id)
+        }
+    }
+
+    /// Relearn whatever is predicting right now — the keyboard path.
+    func relearnSelected() async {
+        guard let model = selectedModel else { return }
+        await relearn(model.id)
+    }
+
+    private func run(_ id: Int, op: StyleCopy.ModelOp,
+                     _ call: @escaping () async throws -> StyleModelInfo)
+        async {
+        guard busyModelId == nil else { return }
+        busyModelId = id
+        defer { busyModelId = nil }
+        modelFault = nil
+        modelErrorText = nil
+        modelOp = op
+        do {
+            _ = try await call()
+            await loadModels()
+        } catch let error as APIError {
+            modelFault = fault(from: error)
+            modelErrorText = error.description
+            await loadModels()
+            return
+        } catch {
+            modelErrorText = String(describing: error)
+            await loadModels()
+            return
+        }
+        // The numbers on screen came from a model that just changed.
+        if id == (selectedModel?.id ?? -1) || selectedModelId == nil {
+            await predict()
+        }
+    }
+
+    /// Delete the model row. Confirmed in the UI because it is irreversible —
+    /// but it destroys no photos, and the dialog says so.
+    func deleteModel(_ id: Int) async {
+        guard busyModelId == nil else { return }
+        busyModelId = id
+        defer { busyModelId = nil }
+        modelFault = nil
+        modelErrorText = nil
+        modelOp = .delete
+        do {
+            _ = try await api.deleteStyleModel(id)
+        } catch let error as APIError {
+            // The dialog stays open with the refusal on it: closing it would
+            // leave the user guessing whether the model is gone.
+            modelFault = fault(from: error)
+            modelErrorText = error.description
+            await loadModels()
+            return
+        } catch {
+            modelErrorText = String(describing: error)
+            await loadModels()
+            return
+        }
+        pendingDelete = nil
+        // Whether the preview on screen came from the model just deleted.
+        let wasPredicting = id == prediction?.model?.id
+        await loadModels()
+        if wasPredicting || selectedModelId == nil { await predict() }
+    }
+
+    /// Choose which model the preview and the write use. Re-asks the engine:
+    /// a different model is different numbers, never a re-filter of these.
+    func selectModel(_ id: Int?) async {
+        guard id != selectedModelId else { return }
+        selectedModelId = id
+        // Family numbers are relative to the history the model clusters, so a
+        // family pinned under one model would mean a different look under
+        // another. Back to the engine's suggestion.
+        familyOverride = nil
+        await predict()
     }
 
     /// Reads the stored exclusions and the engine's modelable list. A failure
@@ -261,9 +532,12 @@ final class StyleModel {
         defer { predicting = false }
         do {
             // photoIds omitted: the engine predicts for the shoot's latest
-            // picks, which is the set a user is about to develop.
+            // picks, which is the set a user is about to develop. modelId
+            // omitted (nil) means the active model — the engine's own default,
+            // resolved server-side so both clients resolve it identically.
             let r = try await api.stylePredict(
-                shootId: shootId, family: familyOverride, photoIds: nil)
+                shootId: shootId, family: familyOverride, photoIds: nil,
+                modelId: selectedModelId)
             prediction = r
             predictFault = nil
             predictErrorText = nil
@@ -293,8 +567,11 @@ final class StyleModel {
         writing = true
         defer { writing = false }
         do {
+            // The same model the preview used: the engine echoes it back, so
+            // the result names the source of the values it wrote.
             writeResult = try await api.styleExportDevelop(
-                shootId: shootId, family: family, photoIds: ids)
+                shootId: shootId, family: family, photoIds: ids,
+                modelId: selectedModelId)
             writeErrorText = nil
         } catch {
             writeErrorText = String(describing: error)

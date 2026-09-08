@@ -184,10 +184,24 @@ enum StyleCopy {
         case "not_analyzed":
             return "This photo has no scene embedding yet — analyze the "
                 + "shoot before predicting."
+        case "model_abstained":
+            // A fitted model with nothing to give for this photo (design 08
+            // §7b). Same sentence as the web client's ABSTAIN_COPY.
+            return "The model returned no value for this photo. Nothing will "
+                + "be written for it."
         default:
             return "The engine abstained (reason: "
                 + (reason ?? "unspecified") + ")."
         }
+    }
+
+    /// The abstention as a prediction row states it: the engine's reason, then
+    /// what happens. `model_abstained`'s own copy already ends with that, so it
+    /// is not said twice.
+    static func abstainLine(_ reason: String?) -> String {
+        reason == "model_abstained"
+            ? abstainCopy(reason)
+            : abstainCopy(reason) + " " + nothingWritten
     }
 
     static func predictErrorCopy(_ code: String?) -> String {
@@ -202,6 +216,13 @@ enum StyleCopy {
         case "insufficient_history":
             return "Not enough imported edit history to predict from — "
                 + "import a Lightroom catalog with your edits."
+        case "model_not_trained":
+            return "That style model has not been learned yet, so it has "
+                + "nothing to predict with. Learn it in Style models above, or "
+                + "choose another model."
+        case "file_missing":
+            return "The engine has no such style model — it may have been "
+                + "deleted in another window. Choose a model again."
         default:
             return previewFailed
         }
@@ -247,6 +268,438 @@ enum StyleCopy {
         plural(n, "predicted parameter") + ", all of them ones you excluded — "
         + "nothing from this prediction will be written."
     }
+
+    // MARK: - Style models (design 08 §7b)
+    //
+    // Every string in this section that the web client also shows is copied
+    // VERBATIM from `web/src/style.ts`, `CreateStyleModelForm.tsx`,
+    // `StyleModelCompare.tsx` and `DeleteStyleModelDialog.tsx`. The comparison
+    // copy especially: two clients describing the same measurement differently
+    // are two clients the user has to reconcile before trusting either.
+    //
+    // The model list rows and the per-row provenance line are native-first
+    // (web has not written that surface yet). They are worded in the same
+    // vocabulary so the web copy can adopt them unchanged.
+
+    /// Method id → the name to show. Unknown methods fall through as
+    /// themselves, so a method the engine gains (design 08 §7b lists `gbt` as
+    /// a candidate) appears rather than vanishing from the picker.
+    static let methodTitles: [String: String] = [
+        "knn": "k-NN — nearest edits in your history",
+        "ridge": "Ridge regression — fitted to your history",
+        "gbt": "Gradient-boosted trees — fitted to your history",
+    ]
+
+    static func methodTitle(_ method: String) -> String {
+        methodTitles[method] ?? method
+    }
+
+    /// The trade-off between methods, stated rather than hidden: it is the
+    /// reason there is a choice here at all. One string, so the web and native
+    /// clients say the same thing.
+    static let methodTradeoff =
+        "The trade-off, plainly: a method that retrieves can show you the "
+        + "photos a prediction came from; a method that fits cannot — it can "
+        + "only say how much history it was fitted from. Which one is more "
+        + "accurate on your own edits is measured, not assumed — learn both "
+        + "and compare them."
+
+    /// `fits` → what that means for the user, in facts about behaviour.
+    static func methodFitsCopy(_ fits: Bool) -> String {
+        fits
+            ? "Fits coefficients to your history when you learn the model. "
+                + "Newly imported edits do not change its predictions until "
+                + "you relearn it."
+            : "Fits nothing in advance: each prediction is blended from the "
+                + "nearest edits in your history at the moment it is made, so "
+                + "newly imported edits count without a relearn. The recorded "
+                + "metrics still date from the last learn."
+    }
+
+    /// `explains_by_neighbours` → what a prediction from it can tell you.
+    /// §7a's inspectability requirement is not waived by accuracy, so a fitted
+    /// method's limit is named up front, before the model is created.
+    static func methodExplainsCopy(_ explains: Bool) -> String {
+        explains
+            ? "Every prediction names the photos it was copied from — “edited "
+                + "like these five”, with thumbnails."
+            : "Predictions cannot name the photos behind a value. Each one "
+                + "reports only that it was fitted, and from how many edited "
+                + "photos."
+    }
+
+    /// How the engine produced the comparison numbers. Not a footnote: it
+    /// changes what they mean (design 08 §7b).
+    static func heldOutCopy(_ heldOutBy: String?) -> String {
+        if heldOutBy == "shot_group" {
+            return "Measured on your own edits, held out by shot group: whole "
+                + "bursts were kept out of the history the model learned "
+                + "from, so a near-duplicate sibling could not hand it the "
+                + "answer."
+        }
+        if heldOutBy == "photo" {
+            return "Measured on your own edits, held out photo by photo: "
+                + "burst siblings can land on both sides of the split, and a "
+                + "near-duplicate sibling in the history flatters retrieval — "
+                + "read these numbers as optimistic."
+        }
+        return "Measured on your own edits, held out by "
+            + (heldOutBy ?? "an unreported split") + "."
+    }
+
+    /// Which operation a refusal came from. `create` and `relearn` differ in
+    /// one fact worth stating: a failed create still leaves the model row
+    /// behind, so the user's choice is not silently discarded.
+    enum ModelOp { case create, relearn, activate, delete }
+
+    /// Engine error codes from the model endpoints → human copy.
+    static func modelErrorCopy(_ code: String?, _ message: String,
+                               _ op: ModelOp) -> String {
+        if code == "unknown_method" {
+            return "The engine does not offer that method (\(message)). "
+                + "Nothing was created — reload to pick up the engine's "
+                + "current method list."
+        }
+        if code == "insufficient_history" {
+            let tail = op == .create
+                ? "The model was created anyway and is listed as not learned, "
+                    + "so your choice is not lost: import or analyze those "
+                    + "edits, then Relearn it."
+                : "The model is unchanged and keeps whatever it last learned, "
+                    + "if anything. Import or analyze those edits, then "
+                    + "Relearn."
+            return "Not enough learnable history in the chosen libraries. The "
+                + "engine needs edited photos that are both imported (a "
+                + "Lightroom Classic catalog, or XMP sidecars carrying develop "
+                + "settings) and analyzed — similarity comes from the scene "
+                + "embedding, so an unanalyzed edit is invisible to it. "
+                + "\(tail) Engine: \(message)"
+        }
+        // Everything else, including the engine's 409 `model_not_trained` on
+        // activate, carries its own explanatory sentence — relayed rather than
+        // paraphrased into a second, drifting version of it.
+        return "The engine rejected this (\(code ?? "error")): \(message)."
+    }
+
+    /// A model's scope in the user's terms. An empty list means every library,
+    /// which is a deliberate answer and is worded as one rather than as
+    /// "none". A library since removed is named as missing instead of being
+    /// dropped — the model was learned from it either way.
+    static let scopeAll = "all libraries"
+    static func missingLibrary(_ id: Int) -> String {
+        "library \(id) (no longer in Shootr)"
+    }
+
+    /// Method knob → display. A null knob is the engine choosing the value
+    /// while it learns (ridge's λ by cross-validation), which is not the same
+    /// as "unset". Keys are sorted because Swift dictionaries carry no JSON
+    /// order; the web client shows them in the engine's order.
+    static func formatModelParams(_ params: [String: StyleParamValue])
+        -> String {
+        params.keys.sorted().map { key in
+            let v = params[key] ?? .null
+            return "\(key) "
+                + (v == .null ? "chosen while learning" : v.display)
+        }.joined(separator: " · ")
+    }
+
+    /// A measured ERROR (mean absolute error), so unsigned: it is a distance,
+    /// and a "+" in front of it would suggest a direction it does not have.
+    /// Formatting only — the number itself is the engine's.
+    static func formatError(_ name: String, _ value: Double) -> String {
+        String(format: name == "Exposure2012" ? "%.3f" : "%.2f", value)
+    }
+
+    // MARK: the model list (web: StyleModelsPanel.tsx)
+
+    static let modelsHeading = "Style models"
+    static let modelsIntro =
+        "A model is yours: you name it, choose how it learns, and choose which "
+        + "libraries it learns from. Nothing is learned when you import a "
+        + "catalog, and no method is picked for you."
+    static let modelsFailed = "The engine could not list your style models."
+    static let modelsLoading = "Loading models…"
+    /// Not an empty list dressed up as a problem: the feature works without a
+    /// model, and the engine says exactly what it falls back to.
+    static let noModelsTitle = "No style models yet"
+    static let noModelsBody =
+        "Predictions still work: with no model, the engine uses its built-in "
+        + "default — nearest edits across all your imported history. Creating "
+        + "a model turns that into a choice you made, on the libraries you "
+        + "picked, with metrics measured for it so it can be compared against "
+        + "another."
+
+    static let activeBadge = "active — predicts unless you choose another"
+    /// Created but never learned. Distinct from "learned and bad".
+    static let notLearnedBadge = "not learned yet"
+
+    static let rowLearnsFrom = "Learns from"
+    static let rowHistoryUsed = "Edit history used"
+    static let rowProcessVersion = "Process version"
+    static let rowLearned = "Learned"
+    static let rowKnobs = "Knobs"
+    static let rowMeasured = "Measured"
+
+    static func historyUsedValue(_ n: Int, trained: Bool) -> String {
+        trained ? plural(n, "edited photo") : "— nothing learned yet"
+    }
+    static func processVersionValue(_ pv: String?) -> String {
+        guard let pv else { return "—" }
+        return "\(pv) — the single version its history was narrowed to"
+    }
+    /// The engine's own timestamp, rendered as given.
+    static func learnedAtValue(_ at: String?) -> String { at ?? "never" }
+    static func measuredValue(_ wins: Int?, _ scored: Int?,
+                              _ coverage: Double?) -> String {
+        var s = "beat the family median on \(wins ?? 0) of "
+            + "\(scored.map(String.init) ?? "—") parameters"
+        if let coverage {
+            s += " · predicted for \(Int((coverage * 100).rounded()))% of "
+                + "held-out photos"
+        }
+        return s
+    }
+
+    static let modelsActivate = "Activate"
+    static let modelsActivating = "Activating…"
+    static let modelsRelearn = "Relearn"
+    static let modelsLearnNow = "Learn now"
+    static let modelsLearning = "Learning…"
+    static let modelsDelete = "Delete…"
+    static let modelsCreate = "Learn a model…"
+    static let modelsCompare = "Compare"
+    static let activateHelpUntrained =
+        "Learn this model first — an unlearned model cannot predict"
+    static let activateHelp =
+        "Make this the model that predicts by default, in both clients"
+    static let relearnHelp =
+        "Re-run this model against your history as it stands now"
+    static let relearnNote =
+        "Relearn is how new shoots take effect — the engine never retrains on "
+        + "its own."
+
+    // MARK: choosing a model for this shoot's preview (web: StylePredictPanel)
+
+    static let modelPickerLabel = "Model"
+    static let modelPickerActive = "Active model — the engine's choice"
+    /// An unlearned model is listed but not selectable: it exists, and hiding
+    /// it would make the list disagree with the manager above.
+    static func modelOption(_ name: String, _ method: String, active: Bool,
+                            trained: Bool) -> String {
+        "\(name) — \(method)" + (active ? " (active)" : "")
+        + (trained ? "" : " — not learned yet")
+    }
+
+    /// The provenance block above the preview rows: which model ran, learned
+    /// when, from how much — and, for a fitted method, what its rows cannot
+    /// say. Same sentences as the web client's `ModelProvenance`.
+    static func noModelProvenance(_ historyUsed: Int?) -> String {
+        "No style model — engine default. These predictions come from the "
+        + "engine's built-in fallback: nearest edits across all your imported "
+        + "history"
+        + (historyUsed.map { " (\(plural($0, "edited photo")))" } ?? "")
+        + ". It works, but nobody chose it. Create a model above to fix the "
+        + "method and the libraries deliberately, and to get metrics you can "
+        + "compare."
+    }
+
+    static func modelProvenance(_ model: StyleModelInfo,
+                                historyUsed: Int?) -> String {
+        var s = "Predicted by \(model.name)"
+            + (model.isActive ? " (active)" : "")
+            + " — \(methodTitle(model.method)). Learned "
+            + learnedAtValue(model.trainedAt) + " from "
+            + plural(model.historyN, "edited photo")
+        if let pv = model.processVersion {
+            s += ", Process Version \(pv)"
+        }
+        if let used = historyUsed, used != model.historyN {
+            s += ". Its libraries now hold \(used) edited photos — relearn to "
+                + "measure against those"
+        }
+        return s + "."
+    }
+
+    static let fittedModelNote =
+        "This model was fitted, so no prediction below can name the photos "
+        + "behind a value: each one reports how much history it was fitted "
+        + "from instead. It also reports no confidence number — the confidence "
+        + "gate is a property of retrieval, and this method has none, so rows "
+        + "show no confidence rather than a made-up one. The §6 guardrails "
+        + "still apply: values are clamped to the range seen in your history."
+
+    /// A model scoped to some libraries clusters its own history, so its family
+    /// numbering need not match the global list above.
+    static let scopedFamiliesNote =
+        "Family numbers here come from clustering this model's own libraries, "
+        + "so they need not line up with the family list above, which clusters "
+        + "all imported history."
+
+    /// True of the fitted path only: the engine drops excluded parameters
+    /// before predicting them, so there is no withheld number to strike
+    /// through. Better said than left as a puzzle.
+    static let fittedExclusionNote =
+        "With a fitted model the engine leaves excluded parameters out before "
+        + "it predicts them, so there is no withheld value to show: they are "
+        + "simply absent below, not struck through."
+    // MARK: create form (web: CreateStyleModelForm.tsx)
+
+    static let createHeading = "Learn a style model"
+    static func methodsFailed(_ code: String?, _ message: String) -> String {
+        "The engine could not list its methods: \(code ?? "error") — \(message)"
+    }
+    static let nameLabel = "Name"
+    static let namePlaceholder = "Weddings 2024–26"
+    static let nameHelp =
+        "Yours to label. Style drifts over years and genres, so a model is "
+        + "worth naming for the work it came from."
+    static let methodLabel = "Method"
+    static func engineDefaults(_ params: String) -> String {
+        "engine defaults: \(params)"
+    }
+    static let librariesLabel = "Learn from"
+    static let librariesHelp =
+        "Which libraries the edit history comes from. Leave everything "
+        + "unchecked to use all of them. Whatever the scope, the engine "
+        + "narrows the history to a single Lightroom process version before "
+        + "learning and records which — the same slider renders differently "
+        + "across versions, so mixing them would describe neither."
+    static let librariesLoading = "Loading libraries…"
+    static let librariesNone =
+        "No libraries yet. A model can still be created with \"all "
+        + "libraries\" as its scope, but there is nothing to learn from until "
+        + "one is added and analyzed."
+    static let libraryOffline = "(offline)"
+    static let scopeAllLine = "Scope: all libraries."
+    static func scopeSomeLine(_ chosen: Int, _ total: Int) -> String {
+        "Scope: \(chosen) of \(total) libraries."
+    }
+
+    /// Stated before the model exists, not discovered later in the preview.
+    static func givesUpNeighbours(_ method: String) -> String {
+        "\(methodTitle(method)) gives up the neighbour explanation. "
+        + "Predictions from it will say they were fitted, and from how many "
+        + "edited photos, but not which photos a value came from. The "
+        + "guardrails are unchanged — values are still clamped to the range "
+        + "seen in your history, and nothing overwrites your own develop "
+        + "settings."
+    }
+
+    static let createButton = "Create and learn"
+    static let createBusy = "Learning…"
+    static let createNoMethod =
+        "Pick a method — the engine does not choose one for you"
+    static let createHelp = "Creates the model and learns it now"
+
+    // MARK: compare (web: StyleModelCompare.tsx)
+
+    static let compareHeading = "Compare models"
+    static let compareNothing =
+        "No learned model has metrics to compare yet. Learn a model — the "
+        + "engine measures it against your own edits as part of learning it."
+    static let compareIntro =
+        "Each column is what the engine's evaluation harness measured for that "
+        + "model, on your own edits. Mean absolute error, in each parameter's "
+        + "own units — lower is closer to what you actually did. Shootr shows "
+        + "the engine's numbers and its own count of parameters where the "
+        + "model beat the family median; it does not add a score of its own or "
+        + "name a winner."
+    static func mixedSplits(_ splits: [String]) -> String {
+        "These models were not held out the same way ("
+        + splits.joined(separator: ", ") + "), so their errors are not "
+        + "directly comparable. Relearn them so both use the same split "
+        + "before reading one against the other."
+    }
+    static let paramColumn = "Parameter"
+    static let rowHistoryN = "Edited photos measured on"
+    static let rowFamilies = "Look families"
+    static let rowCoverage = "Coverage (predicted, not abstained)"
+    static let rowBeatsMedian = "Beat the family median on"
+    static let rowHeldOutBy = "Held out by"
+    static let rowLambda = "λ used"
+    static let heldOutNotReported = "not reported"
+    static let perParamHeading =
+        "Per parameter — model error vs. family-median baseline"
+    static let notScored = "not scored for this model"
+    static func medianCell(_ text: String) -> String { "median \(text)" }
+    static func nCell(_ n: Int) -> String { "n \(n)" }
+    static func beatsMedianCell(_ wins: Int?, _ scored: Int?) -> String {
+        guard let wins else { return "—" }
+        return "\(wins) of \(scored.map(String.init) ?? "?") parameters"
+    }
+    /// The engine's fraction, shown as a percentage too — the same number in
+    /// different units, not a derived one.
+    static func coverageCell(_ coverage: Double?) -> String {
+        guard let coverage else { return "—" }
+        return "\(Int((coverage * 100).rounded()))% (\(coverage))"
+    }
+    static func unmeasuredNote(_ names: [String]) -> String {
+        "Not in this comparison, because the engine has no metrics for "
+        + (names.count == 1 ? "it" : "them") + ": "
+        + names.joined(separator: ", ") + ". Relearn to measure."
+    }
+    static let baselineNoValue =
+        "the family median had no value to score here"
+
+    // MARK: delete (web: DeleteStyleModelDialog.tsx)
+
+    static let deleteHeading = "Delete this style model?"
+    static func deleteSubject(_ name: String, _ method: String,
+                              active: Bool) -> String {
+        "\(name) — \(method)" + (active ? " (currently active)" : "")
+    }
+    static let deleteBody =
+        "Only the model is deleted: its name, its method, and what it learned. "
+        + "No photo, sidecar or edit of yours is touched, and the edit history "
+        + "it learned from is untouched — you can learn the same model again."
+    static func deleteSidecars(active: Bool) -> String {
+        "Develop settings already written to XMP sidecars stay as they are on "
+        + "disk."
+        + (active
+           ? " This model is active, so until you activate another one "
+             + "predictions fall back to the engine's built-in default."
+           : "")
+    }
+    static let deleteButton = "Delete model"
+    static let deleteBusy = "Deleting…"
+
+    // MARK: prediction provenance (§7a: a prediction must say where it's from)
+
+    static let provenanceHeading = "Where this came from"
+    static func fittedFrom(_ n: Int) -> String {
+        "Fitted from " + plural(n, "edited photo") + " of yours."
+    }
+    static let fittedNoNeighbours =
+        "No neighbour photos: a fitted model cannot point at the photos a "
+        + "value came from. This is the whole of what it can say about its "
+        + "source."
+    /// Where a confidence figure would go on a fitted row. Naming the kind of
+    /// prediction is honest; an empty gap or a made-up 0 is not.
+    static let fittedTag = "fitted prediction"
+
+    /// The write dialog names its source before and after: which predictor's
+    /// values are about to land in the user's files, and which the engine says
+    /// produced the ones that did (web: StyleWriteDialog.tsx).
+    static func writeFromModel(_ model: StyleModelInfo?) -> String {
+        guard let model else {
+            return "From the engine's built-in default (nearest edits across "
+                + "all imported history) — no style model was chosen."
+        }
+        return "From your model \(model.name) — "
+            + "\(methodTitle(model.method)), learned "
+            + learnedAtValue(model.trainedAt) + " from "
+            + plural(model.historyN, "edited photo") + "."
+    }
+
+    static func wroteSidecars(_ n: Int, _ model: StyleModelInfo?) -> String {
+        "Wrote " + plural(n, "sidecar")
+        + (model.map { " from \($0.name) (\($0.method))." }
+           ?? " from the engine's built-in default predictor.")
+    }
+    static let noParamsReturned =
+        "The model returned no parameter values for this photo, so nothing "
+        + "will be written for it. That is not the same as \"this photo needs "
+        + "no edit\"."
 }
 
 // MARK: - Sheet shell
@@ -275,6 +728,11 @@ struct StyleSheet: View {
                             .foregroundStyle(Theme.inkMuted)
                             .fixedSize(horizontal: false, vertical: true)
 
+                        // The models section stays visible with no history:
+                        // creating a model is how the user narrows the scope
+                        // that has none, and a screen that hid it would leave
+                        // them nothing to do but re-import.
+                        StyleModelsPanel(model: model)
                         if noHistory {
                             NoHistoryNote(model: model)
                         } else {
@@ -302,6 +760,15 @@ struct StyleSheet: View {
         .task { await model.load(shootId: shoot.id) }
         .sheet(isPresented: $model.showWrite) {
             StyleWriteDialog(model: model)
+        }
+        .sheet(isPresented: $model.showCreate) {
+            CreateStyleModelForm(model: model)
+        }
+        .sheet(isPresented: $model.showCompare) {
+            StyleModelCompareSheet(model: model)
+        }
+        .sheet(item: $model.pendingDelete) { target in
+            DeleteStyleModelDialog(model: model, target: target)
         }
     }
 
@@ -382,6 +849,12 @@ enum StyleShortcuts {
         Shortcuts.Item("↑ ↓", "move"),
         Shortcuts.Item("J K", "move"),
         Shortcuts.Item("R", "re-predict"),
+        // Relearn is L, not R: R re-asks the engine with the model as it is,
+        // L re-runs the model against current history. Two different actions,
+        // so two keys — and R keeps the meaning it already had.
+        Shortcuts.Item("L", "relearn model"),
+        Shortcuts.Item("N", "new model…"),
+        Shortcuts.Item("C", "compare models…"),
         Shortcuts.Item("W", "write…"),
         Shortcuts.Item("Esc", "close"),
     ]
@@ -455,6 +928,732 @@ struct EngineNote: View {
     }
 }
 
+// MARK: - Style models (design 08 §7b): learn · relearn · compare · choose
+//
+// The user's objects, with all four operations explicit. Nothing here decides
+// anything: the method registry, the metrics, the active model and the scope
+// are engine state, and the comparison prints the engine's numbers without
+// adding a score, a ranking or a winner of its own (rule 6).
+
+struct StyleModelsPanel: View {
+    @Bindable var model: StyleModel
+
+    private var listable: Bool {
+        !model.models.isEmpty || model.loadingModels
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                SectionHeader(StyleCopy.modelsHeading)
+                Spacer()
+                Button(StyleCopy.modelsCompare) { model.showCompare = true }
+                    .font(Theme.caption)
+                    .disabled(model.models.isEmpty)
+                Button(StyleCopy.modelsCreate) { model.beginCreate() }
+                    .font(Theme.caption)
+            }
+
+            Text(StyleCopy.modelsIntro)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let error = model.modelsErrorText {
+                EngineNote(title: StyleCopy.modelsFailed, code: nil,
+                           message: error) {
+                    Task { await model.loadModels() }
+                }
+            }
+
+            // A refused learn / relearn / activate / delete: its own sentence,
+            // and what state the model is in afterwards.
+            if model.modelFault != nil || model.modelErrorText != nil {
+                Text(StyleCopy.modelErrorCopy(
+                    model.modelFault?.code,
+                    model.modelFault?.message ?? model.modelErrorText ?? "",
+                    model.modelOp))
+                    .font(Theme.micro)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.surfaceRaised,
+                                in: RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5)
+                        .stroke(.red.opacity(0.5), lineWidth: 1))
+            }
+
+            if model.loadingModels, model.models.isEmpty {
+                Text(StyleCopy.modelsLoading)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.inkMuted)
+            } else if !listable, model.modelsErrorText == nil {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(StyleCopy.noModelsTitle)
+                        .font(Theme.caption)
+                        .foregroundStyle(Theme.ink)
+                    Text(StyleCopy.noModelsBody)
+                        .font(Theme.caption)
+                        .foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                ForEach(model.models) { info in
+                    StyleModelRow(
+                        model: model, info: info,
+                        usedByPreview: model.predictingModel?.id == info.id)
+                }
+            }
+        }
+    }
+}
+
+/// One model: name, method, scope, how much history it learned from, which
+/// process version, when — and what its method can show you. Every field is
+/// the engine's; the row adds no verdict about the model. Same fields and the
+/// same sentences as the web client's `ModelRow`.
+struct StyleModelRow: View {
+    @Bindable var model: StyleModel
+    let info: StyleModelInfo
+    /// The model the preview below actually ran with, straight from the predict
+    /// response — so "used by the preview" is the engine's answer, not this
+    /// client's guess about how its own picker resolved.
+    let usedByPreview: Bool
+
+    private var busy: Bool { model.busyModelId == info.id }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(info.name)
+                    .font(Theme.heading)
+                    .foregroundStyle(Theme.ink)
+                if info.isActive { badge(StyleCopy.activeBadge, Theme.alt) }
+                if usedByPreview {
+                    badge(StyleCopy.usedByPreview, Theme.inkMuted)
+                }
+                if !info.trained {
+                    badge(StyleCopy.notLearnedBadge, Theme.warning)
+                }
+                Spacer()
+                if busy { ProgressView().controlSize(.mini) }
+                Text(StyleCopy.methodTitle(info.method))
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.inkSecondary)
+            }
+
+            Grid(alignment: .topLeading, horizontalSpacing: 10,
+                 verticalSpacing: 2) {
+                field(StyleCopy.rowLearnsFrom, model.scopeLabel(info))
+                field(StyleCopy.rowHistoryUsed,
+                      StyleCopy.historyUsedValue(info.historyN,
+                                                 trained: info.trained))
+                field(StyleCopy.rowProcessVersion,
+                      StyleCopy.processVersionValue(info.processVersion))
+                field(StyleCopy.rowLearned,
+                      StyleCopy.learnedAtValue(info.trainedAt))
+                if !info.params.isEmpty {
+                    field(StyleCopy.rowKnobs,
+                          StyleCopy.formatModelParams(info.params),
+                          mono: true)
+                }
+                // The engine's own tally, printed as it came. Recounting it
+                // here would be this client keeping a second opinion about
+                // which model is better (rule 6).
+                if info.metrics.paramsScored != nil {
+                    field(StyleCopy.rowMeasured,
+                          StyleCopy.measuredValue(info.metrics.beatsMedianOn,
+                                                  info.metrics.paramsScored,
+                                                  info.metrics.coverage))
+                }
+            }
+
+            // §7a's inspectability fact, per model: what a prediction from it
+            // will be able to tell the user.
+            Text(StyleCopy.methodExplainsCopy(info.explainsByNeighbours))
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if info.metrics.heldOutBy != nil {
+                Text(StyleCopy.heldOutCopy(info.metrics.heldOutBy))
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 8) {
+                Button(busy && model.modelOp == .activate
+                       ? StyleCopy.modelsActivating : StyleCopy.modelsActivate) {
+                    Task { await model.activate(info.id) }
+                }
+                .font(Theme.caption)
+                .disabled(info.isActive || !info.trained
+                          || model.busyModelId != nil)
+                .help(info.trained ? StyleCopy.activateHelp
+                      : StyleCopy.activateHelpUntrained)
+
+                Button(busy && model.modelOp == .relearn
+                       ? StyleCopy.modelsLearning
+                       : (info.trained ? StyleCopy.modelsRelearn
+                          : StyleCopy.modelsLearnNow)) {
+                    Task { await model.relearn(info.id) }
+                }
+                .font(Theme.caption)
+                .disabled(model.busyModelId != nil)
+                .help(StyleCopy.relearnHelp)
+
+                Button(StyleCopy.modelsDelete) {
+                    // A previous operation's refusal must not appear on the
+                    // delete dialog as though it were about the delete.
+                    model.modelFault = nil
+                    model.modelErrorText = nil
+                    model.pendingDelete = info
+                }
+                .font(Theme.caption)
+                .disabled(model.busyModelId != nil)
+
+                Spacer()
+
+                Text(StyleCopy.relearnNote)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 260, alignment: .trailing)
+                    .multilineTextAlignment(.trailing)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(info.isActive ? Theme.alt.opacity(0.5) : .clear,
+                        lineWidth: 1))
+    }
+
+    private func badge(_ text: String, _ tint: Color) -> some View {
+        HStack(spacing: 4) {
+            StateSwatch(color: tint)
+            Text(text)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Theme.surfaceRaised, in: Capsule())
+    }
+
+    private func field(_ label: String, _ value: String,
+                       mono: Bool = false) -> some View {
+        GridRow {
+            Text(label)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+                .frame(width: 130, alignment: .leading)
+            Text(value)
+                .font(mono ? Theme.value : Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Learn a model (operation 1: create AND learn, one explicit action)
+
+/// Name, method, libraries. No method is preselected — the engine privileges
+/// none, and a filled-in radio would be this client recommending one. Each
+/// option states the two facts that decide the choice (design 08 §7b): whether
+/// it fits, and whether a prediction can name the photos behind it.
+struct CreateStyleModelForm: View {
+    @Bindable var model: StyleModel
+    @Environment(\.dismiss) private var dismiss
+
+    private var chosen: StyleMethod? {
+        model.methods.first { $0.method == model.newMethod }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(StyleCopy.createHeading)
+                .font(Theme.heading)
+                .foregroundStyle(Theme.ink)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let error = model.modelsErrorText {
+                        Text(StyleCopy.methodsFailed(nil, error))
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    nameField
+                    methodField
+                    librariesField
+                    if let chosen, !chosen.explainsByNeighbours {
+                        // Stated before the model exists, not discovered later
+                        // in the preview.
+                        Text(StyleCopy.givesUpNeighbours(chosen.method))
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.surfaceRaised,
+                                        in: RoundedRectangle(cornerRadius: 5))
+                            .overlay(RoundedRectangle(cornerRadius: 5)
+                                .stroke(Theme.bracket.opacity(0.5),
+                                        lineWidth: 1))
+                    }
+                    if model.createFault != nil
+                        || model.createErrorText != nil {
+                        Text(StyleCopy.modelErrorCopy(
+                            model.createFault?.code,
+                            model.createFault?.message
+                                ?? model.createErrorText ?? "", .create))
+                            .font(Theme.micro)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.surfaceRaised,
+                                        in: RoundedRectangle(cornerRadius: 5))
+                            .overlay(RoundedRectangle(cornerRadius: 5)
+                                .stroke(.red.opacity(0.5), lineWidth: 1))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button(model.creating ? StyleCopy.createBusy
+                       : StyleCopy.createButton) {
+                    Task { await model.createModel() }
+                }
+                .disabled(model.creating
+                          || model.newName.trimmingCharacters(
+                              in: .whitespacesAndNewlines).isEmpty
+                          || model.newMethod == nil)
+                .help(model.newMethod == nil ? StyleCopy.createNoMethod
+                      : StyleCopy.createHelp)
+            }
+        }
+        .padding(18)
+        .frame(width: 620, height: 620)
+        .background(Theme.surface)
+        .onKeyPress(.escape) { dismiss(); return .handled }
+    }
+
+    private var nameField: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(StyleCopy.nameLabel)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+            TextField(StyleCopy.namePlaceholder, text: $model.newName)
+                .font(Theme.caption)
+            Text(StyleCopy.nameHelp)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var methodField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(StyleCopy.methodLabel)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+            Text(StyleCopy.methodTradeoff)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(model.methods) { method in
+                methodOption(method)
+            }
+        }
+    }
+
+    private func methodOption(_ method: StyleMethod) -> some View {
+        let picked = model.newMethod == method.method
+        return Button {
+            model.newMethod = method.method
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: picked
+                          ? "largecircle.fill.circle" : "circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(picked ? Theme.alt : Theme.inkMuted)
+                    Text(StyleCopy.methodTitle(method.method))
+                        .font(Theme.caption)
+                        .foregroundStyle(Theme.ink)
+                    Text(method.method)
+                        .font(Theme.value)
+                        .foregroundStyle(Theme.inkMuted)
+                }
+                Text(StyleCopy.methodFitsCopy(method.fits))
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(StyleCopy.methodExplainsCopy(method.explainsByNeighbours))
+                    .font(Theme.micro)
+                    .foregroundStyle(method.explainsByNeighbours
+                                     ? Theme.inkSecondary : Theme.bracket)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !method.defaultParams.isEmpty {
+                    Text(StyleCopy.engineDefaults(
+                        StyleCopy.formatModelParams(method.defaultParams)))
+                        .font(Theme.value)
+                        .foregroundStyle(Theme.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(picked ? Theme.surfaceRaised : Theme.surface,
+                        in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .stroke(picked ? Theme.alt.opacity(0.5) : Theme.hairline,
+                        lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var librariesField: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(StyleCopy.librariesLabel)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+            Text(StyleCopy.librariesHelp)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.loadingModels, model.libraries.isEmpty {
+                Text(StyleCopy.librariesLoading)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+            } else if model.libraries.isEmpty {
+                Text(StyleCopy.librariesNone)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(model.libraries, id: \.id) { library in
+                    Toggle(isOn: Binding(
+                        get: { model.newLibraryIds.contains(library.id) },
+                        set: { on in
+                            if on { model.newLibraryIds.insert(library.id) }
+                            else { model.newLibraryIds.remove(library.id) }
+                        })) {
+                        HStack(spacing: 4) {
+                            Text(library.rootPath)
+                                .foregroundStyle(Theme.inkSecondary)
+                            if !library.online {
+                                Text(StyleCopy.libraryOffline)
+                                    .foregroundStyle(Theme.inkMuted)
+                            }
+                        }
+                        .font(Theme.micro)
+                    }
+                    .toggleStyle(.checkbox)
+                }
+                Text(model.newLibraryIds.isEmpty
+                     ? StyleCopy.scopeAllLine
+                     : StyleCopy.scopeSomeLine(model.newLibraryIds.count,
+                                               model.libraries.count))
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+            }
+        }
+    }
+}
+
+// MARK: - Compare (operation 3): the engine's numbers, side by side
+
+/// Models next to each other on the metrics ONE harness measured for each of
+/// them. This view deliberately computes nothing: no aggregate, no ranking, no
+/// per-parameter winner mark. Those would be the client inventing a verdict on
+/// top of the engine's measurements, which is how two frontends start
+/// disagreeing about which model is better (rule 6). The only tally shown is
+/// `beats_median_on`, which the engine itself counted.
+struct StyleModelCompareSheet: View {
+    @Bindable var model: StyleModel
+    @Environment(\.dismiss) private var dismiss
+
+    private var measured: [StyleModelInfo] { model.measuredModels }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(StyleCopy.compareHeading)
+                    .font(Theme.heading)
+                    .foregroundStyle(Theme.ink)
+                Spacer()
+                Button("Close") { dismiss() }
+                    .font(Theme.caption)
+            }
+
+            if measured.isEmpty {
+                Text(StyleCopy.compareNothing)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(StyleCopy.compareIntro)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // Different splits → the columns were not measured the same
+                // way. Said out loud, because comparing across splits is the
+                // mistake §7b exists to prevent.
+                if model.comparedSplits.count > 1 {
+                    Text(StyleCopy.mixedSplits(model.comparedSplits))
+                        .font(Theme.micro)
+                        .foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.surfaceRaised,
+                                    in: RoundedRectangle(cornerRadius: 5))
+                        .overlay(RoundedRectangle(cornerRadius: 5)
+                            .stroke(Theme.bracket.opacity(0.5), lineWidth: 1))
+                }
+
+                ScrollView([.vertical, .horizontal]) {
+                    table
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(measured) { m in
+                        Text("\(m.name): "
+                             + StyleCopy.heldOutCopy(m.metrics.heldOutBy))
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
+            if !model.unmeasuredModels.isEmpty {
+                Text(StyleCopy.unmeasuredNote(
+                    model.unmeasuredModels.map(\.name)))
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(18)
+        .frame(width: 860, height: 660)
+        .background(Theme.surface)
+        .onKeyPress(.escape) { dismiss(); return .handled }
+    }
+
+    private var table: some View {
+        Grid(alignment: .topLeading, horizontalSpacing: 16,
+             verticalSpacing: 6) {
+            GridRow {
+                Text(StyleCopy.paramColumn)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+                    .frame(width: 170, alignment: .leading)
+                ForEach(measured) { m in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(m.name)
+                                .font(Theme.caption)
+                                .foregroundStyle(Theme.ink)
+                            if m.isActive {
+                                Text(StyleCopy.activeBadge)
+                                    .font(Theme.micro)
+                                    .foregroundStyle(Theme.inkSecondary)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Theme.surfaceRaised,
+                                                in: Capsule())
+                            }
+                        }
+                        Text(StyleCopy.methodTitle(m.method))
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkMuted)
+                        Text(model.scopeLabel(m))
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    .frame(width: 190, alignment: .leading)
+                }
+            }
+            Divider().overlay(Theme.hairline).gridCellColumns(
+                measured.count + 1)
+
+            // How each column was produced, before any of its numbers.
+            provenanceRow(StyleCopy.rowHistoryN) {
+                "\($0.metrics.historyN ?? $0.historyN)"
+            }
+            provenanceRow(StyleCopy.rowFamilies) {
+                $0.metrics.families.map(String.init) ?? "—"
+            }
+            provenanceRow(StyleCopy.rowCoverage) {
+                StyleCopy.coverageCell($0.metrics.coverage)
+            }
+            provenanceRow(StyleCopy.rowBeatsMedian) {
+                StyleCopy.beatsMedianCell($0.metrics.beatsMedianOn,
+                                          $0.metrics.paramsScored)
+            }
+            provenanceRow(StyleCopy.rowHeldOutBy) {
+                $0.metrics.heldOutBy ?? StyleCopy.heldOutNotReported
+            }
+            // Only ridge has a λ; "—" is "this method has none", which is not
+            // the same as a λ of zero.
+            provenanceRow(StyleCopy.rowLambda) {
+                $0.metrics.lambda.map {
+                    StyleParamValue.double($0).display } ?? "—"
+            }
+
+            GridRow {
+                Text(StyleCopy.perParamHeading)
+                    .font(Theme.micro)
+                    .textCase(.uppercase)
+                    .foregroundStyle(Theme.inkMuted)
+                    .gridCellColumns(measured.count + 1)
+            }
+
+            ForEach(model.comparedParamNames, id: \.self) { name in
+                GridRow {
+                    Text(StyleParams.label(name)
+                         + StyleParams.unit(name))
+                        .font(Theme.caption)
+                        .foregroundStyle(Theme.inkSecondary)
+                        .frame(width: 170, alignment: .leading)
+                    ForEach(measured) { m in
+                        paramCell(m, name)
+                    }
+                }
+            }
+        }
+    }
+
+    private func provenanceRow(
+        _ label: String, _ cell: @escaping (StyleModelInfo) -> String
+    ) -> some View {
+        GridRow {
+            Text(label)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+                .frame(width: 170, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(measured) { m in
+                Text(cell(m))
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 190, alignment: .leading)
+            }
+        }
+    }
+
+    private func paramCell(_ m: StyleModelInfo,
+                           _ name: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if let row = m.metrics.perParam?[name] {
+                Text(StyleCopy.formatError(name, row.mae))
+                    .font(Theme.value)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .help("\(name): model MAE \(row.mae)")
+                Text(StyleCopy.medianCell(
+                    row.baselineMae.map {
+                        StyleCopy.formatError(name, $0) } ?? "—"))
+                    .font(Theme.value)
+                    .foregroundStyle(Theme.inkMuted)
+                    .help(row.baselineMae.map {
+                        "family median MAE \($0)" }
+                        ?? StyleCopy.baselineNoValue)
+                Text(StyleCopy.nCell(row.n))
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+            } else {
+                // Not scored for this model — a gap in the measurement, not a
+                // zero error (rule 8).
+                Text(StyleCopy.notScored)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(width: 190, alignment: .leading)
+    }
+}
+
+// MARK: - Delete a model (destroys no photos — and says so)
+
+struct DeleteStyleModelDialog: View {
+    @Bindable var model: StyleModel
+    let target: StyleModelInfo
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(StyleCopy.deleteHeading)
+                .font(Theme.heading)
+                .foregroundStyle(Theme.ink)
+
+            Text(StyleCopy.deleteSubject(target.name, target.method,
+                                         active: target.isActive))
+                .font(Theme.caption)
+                .foregroundStyle(Theme.inkMuted)
+
+            Text(StyleCopy.deleteBody)
+                .font(Theme.caption)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(StyleCopy.deleteSidecars(active: target.isActive))
+                .font(Theme.caption)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if model.modelFault != nil || model.modelErrorText != nil {
+                Text(StyleCopy.modelErrorCopy(
+                    model.modelFault?.code,
+                    model.modelFault?.message
+                        ?? model.modelErrorText ?? "", .delete))
+                    .font(Theme.micro)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    model.pendingDelete = nil
+                    dismiss()
+                }
+                // Never the default action: no Return-key path into deleting
+                // something the user built.
+                Button(model.busyModelId == target.id
+                       ? StyleCopy.deleteBusy : StyleCopy.deleteButton) {
+                    Task { await model.deleteModel(target.id) }
+                }
+                .disabled(model.busyModelId != nil)
+            }
+        }
+        .padding(18)
+        .frame(width: 520)
+        .background(Theme.surface)
+        .onKeyPress(.escape) {
+            model.pendingDelete = nil
+            dismiss()
+            return .handled
+        }
+    }
+}
 // MARK: - Screen 1: look families (read-only; discovered, not configured)
 
 struct FamilyCard: View {
@@ -565,7 +1764,8 @@ struct StylePredictPanel: View {
                         prediction: p,
                         params: p.params.map(model.orderedParams) ?? [],
                         excluded: p.excluded.map(model.orderedParams) ?? [],
-                        isCurrent: i == model.cursor)
+                        isCurrent: i == model.cursor,
+                        producedBy: model.predictingModel)
                         .id(p.photoId)
                         .onTapGesture { model.cursor = i }
                 }
@@ -593,6 +1793,37 @@ struct StylePredictPanel: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // Choose (design 08 §7b, operation 4). "Active model" is the
+            // engine's own answer and is labelled as such — defaulting to a
+            // particular model here would be the client holding a second
+            // opinion about which one matters. Selecting one sends its id;
+            // "active" sends no `model_id` at all.
+            HStack(spacing: 8) {
+                Picker(StyleCopy.modelPickerLabel, selection: Binding(
+                    get: { model.selectedModelId },
+                    set: { id in Task { await model.selectModel(id) } })) {
+                    Text(StyleCopy.modelPickerActive).tag(Int?.none)
+                    ForEach(model.models) { m in
+                        Text(StyleCopy.modelOption(m.name, m.method,
+                                                   active: m.isActive,
+                                                   trained: m.trained))
+                            .tag(Int?.some(m.id))
+                    }
+                }
+                .frame(maxWidth: 460)
+                if model.predicting {
+                    HStack(spacing: 5) {
+                        ProgressView().controlSize(.mini)
+                        Text("predicting…")
+                            .font(Theme.caption)
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                }
+                Spacer()
+            }
+            // Which model actually produced what is on screen, learned when and
+            // from how much — the engine's echo, so a fallback is named as one.
+            if model.prediction != nil { provenance }
             HStack(spacing: 8) {
                 Picker("Look family", selection: Binding(
                     get: { model.familyOverride },
@@ -604,14 +1835,6 @@ struct StylePredictPanel: View {
                     }
                 }
                 .frame(maxWidth: 380)
-                if model.predicting {
-                    HStack(spacing: 5) {
-                        ProgressView().controlSize(.mini)
-                        Text("predicting…")
-                            .font(Theme.caption)
-                            .foregroundStyle(Theme.inkMuted)
-                    }
-                }
                 Spacer()
                 Button("Re-predict") { Task { await model.predict() } }
                     .font(Theme.caption)
@@ -646,6 +1869,39 @@ struct StylePredictPanel: View {
         }
     }
 
+    /// Which model produced the preview, in the engine's own terms. A fitted
+    /// model gets the extra paragraph: its rows can name no photos and report
+    /// no confidence, and that is said once here rather than being discovered
+    /// row by row (design 08 §7a/§7b).
+    private var provenance: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(model.predictingModel.map {
+                StyleCopy.modelProvenance(
+                    $0, historyUsed: model.prediction?.history?.used) }
+                 ?? StyleCopy.noModelProvenance(
+                     model.prediction?.history?.used))
+                .font(Theme.caption)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let used = model.predictingModel,
+               !used.explainsByNeighbours {
+                Text(StyleCopy.fittedModelNote)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.bracket)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let used = model.predictingModel, !used.libraryIds.isEmpty {
+                Text(StyleCopy.scopedFamiliesNote)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6))
+    }
+
     /// The per-parameter opt-out. Each checkbox is a PUT to the engine and a
     /// re-predict; unchecking one stops that parameter being written by either
     /// client (design 08 §6/§7a).
@@ -659,6 +1915,16 @@ struct StylePredictPanel: View {
                 .font(Theme.micro)
                 .foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // The fitted path never produces a withheld value to strike
+            // through: the engine drops excluded parameters before predicting
+            // them. Said, rather than left as a puzzle.
+            if let used = model.predictingModel, !used.explainsByNeighbours {
+                Text(StyleCopy.fittedExclusionNote)
+                    .font(Theme.micro)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             FlowLayout(spacing: 10) {
                 ForEach(model.paramNames, id: \.self) { name in
@@ -772,8 +2038,15 @@ struct StylePredictionRow: View {
     /// engine's `excluded` map (design 08 §7a).
     let excluded: [(String, Double)]
     let isCurrent: Bool
+    /// The model the engine says produced this row, nil for its implicit
+    /// default. Named per row: "which model was this?" is the first question
+    /// once there is more than one (design 08 §7b).
+    var producedBy: StyleModelInfo?
 
     private var neighbors: [Int] { prediction.neighborPhotoIds ?? [] }
+    /// A fitted method's provenance: how much history it was fitted from.
+    /// Keyed off the engine's field, not off the model's method string.
+    private var fittedFrom: Int? { prediction.fittedFromHistoryN }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -794,20 +2067,28 @@ struct StylePredictionRow: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Theme.surfaceRaised, in: Capsule())
-                    } else {
+                    } else if let confidence = prediction.confidence {
+                        // Printed only when the engine reported one. A fitted
+                        // method sends null, and "confidence —" or a 0 would
+                        // both be inventing a figure it does not publish.
                         Text("confidence "
-                             + (prediction.confidence.map {
-                                 String(format: "%.2f", $0) } ?? "—"))
+                             + String(format: "%.2f", confidence))
                             .font(Theme.value)
                             .foregroundStyle(Theme.inkSecondary)
+                    } else if fittedFrom != nil {
+                        // A fitted method has no retrieval confidence. Say
+                        // what it is instead of showing an empty or invented
+                        // number.
+                        Text(StyleCopy.fittedTag)
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkMuted)
                     }
                 }
 
                 if prediction.abstained {
                     // Never a blank parameter list: an abstention is stated,
                     // with its cause, and with what will happen (nothing).
-                    Text(StyleCopy.abstainCopy(prediction.reason) + " "
-                         + StyleCopy.nothingWritten
+                    Text(StyleCopy.abstainLine(prediction.reason)
                          + (prediction.confidence.map {
                              " (engine confidence "
                              + String(format: "%.2f", $0)
@@ -822,6 +2103,14 @@ struct StylePredictionRow: View {
                     // said outright, rather than shown as an empty row that
                     // reads as "no edit". The values themselves are below.
                     Text(StyleCopy.allExcluded(excluded.count))
+                        .font(Theme.micro)
+                        .foregroundStyle(Theme.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    // Not an abstention and not an exclusion: the engine
+                    // returned an empty parameter set. Stated, because an
+                    // empty row would read as "no changes needed".
+                    Text(StyleCopy.noParamsReturned)
                         .font(Theme.micro)
                         .foregroundStyle(Theme.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -858,24 +2147,43 @@ struct StylePredictionRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if !neighbors.isEmpty {
+            // Where the numbers came from. Retrieval names photos; a fitted
+            // method reports how much history it was fitted from — and gets
+            // that sentence rather than an empty thumbnail strip (§7a, §7b).
+            if !neighbors.isEmpty || fittedFrom != nil {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(prediction.abstained
-                         ? "Closest \(neighbors.count) in your history — not "
-                           + "close enough to copy"
-                         : "Edited like these \(neighbors.count)")
-                        .font(Theme.micro)
-                        .textCase(.uppercase)
-                        .foregroundStyle(Theme.inkMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: 300, alignment: .leading)
-                    HStack(spacing: 4) {
-                        ForEach(neighbors, id: \.self) { pid in
-                            StyleThumb(photoId: pid, width: 64, height: 48)
-                                .help("history photo \(pid)")
+                    if !neighbors.isEmpty {
+                        Text(prediction.abstained
+                             ? "Closest \(neighbors.count) in your history — "
+                               + "not close enough to copy"
+                             : "Edited like these \(neighbors.count)")
+                            .font(Theme.micro)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Theme.inkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: 300, alignment: .leading)
+                        HStack(spacing: 4) {
+                            ForEach(neighbors, id: \.self) { pid in
+                                StyleThumb(photoId: pid, width: 64, height: 48)
+                                    .help("history photo \(pid)")
+                            }
                         }
+                    } else if let n = fittedFrom {
+                        Text(StyleCopy.provenanceHeading)
+                            .font(Theme.micro)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Theme.inkMuted)
+                        Text(StyleCopy.fittedFrom(n))
+                            .font(Theme.caption)
+                            .foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(StyleCopy.fittedNoNeighbours)
+                            .font(Theme.micro)
+                            .foregroundStyle(Theme.inkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                .frame(maxWidth: 300, alignment: .leading)
             }
         }
         .padding(8)
@@ -921,6 +2229,9 @@ struct StyleWriteDialog: View {
                      + " to write — family \(model.effectiveFamily ?? -1)"
                      + (model.prediction.map {
                          ", Process Version \($0.processVersion)" } ?? ""))
+            // Which predictor's values are about to land in the files.
+            DiffLine(icon: "wand.and.stars",
+                     text: StyleCopy.writeFromModel(model.predictingModel))
             if model.abstainingCount > 0 {
                 let n = model.abstainingCount
                 DiffLine(icon: "minus.circle",
@@ -970,9 +2281,12 @@ struct StyleWriteDialog: View {
     @ViewBuilder
     private func resultView(_ r: StyleWriteResult) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Wrote \(StyleCopy.plural(r.written.count, "sidecar")).")
+            // The engine names the model it used; relayed so the record of the
+            // write says where the values came from.
+            Text(StyleCopy.wroteSidecars(r.written.count, r.model))
                 .font(Theme.body)
                 .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
 
             // The engine reports back which exclusions it honoured; relayed so
             // the write's scope is confirmed rather than assumed.
@@ -1194,7 +2508,13 @@ struct StyleKeyCatcher: NSViewRepresentable {
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
                 [weak self] event in
                 guard let self, let model = self.model else { return event }
-                if model.showWrite { return event }
+                // Every sheet over this screen owns the keyboard: the write
+                // confirm, the create form (it has a text field), the compare
+                // sheet and the delete confirm.
+                if model.showWrite || model.showCreate || model.showCompare
+                    || model.pendingDelete != nil {
+                    return event
+                }
                 if event.window?.firstResponder is NSTextView { return event }
                 if event.modifierFlags.intersection(
                     [.command, .option, .control]) != [] { return event }
@@ -1225,6 +2545,16 @@ struct StyleKeyCatcher: NSViewRepresentable {
             case "j": model.moveCursor(-1)
             case "k": model.moveCursor(1)
             case "r": Task { await model.predict() }
+            // Relearn what is predicting: the engine re-runs the same model
+            // against current history. Distinct from R, which re-asks with the
+            // model unchanged.
+            case "l":
+                if model.selectedModel != nil {
+                    Task { await model.relearnSelected() }
+                }
+            case "n": model.beginCreate()
+            case "c":
+                if !model.models.isEmpty { model.showCompare = true }
             case "w":
                 if !model.writeIds.isEmpty { model.showWrite = true }
             default: return false

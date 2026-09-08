@@ -678,9 +678,10 @@ enum Shortcuts {
         Item("B", "eye crops", "full-res eyes of the primary face — blink check"),
         Item("E", "evidence panel", "per-metric scores behind the verdict"),
         Item("D", "style / develop",
-             "look families and predicted develop settings for this shoot's "
-             + "picks, with the photos they were learned from — a preview; "
-             + "writes only on confirm"),
+             "style models, look families and predicted develop settings for "
+             + "this shoot's picks, with the photos they were learned from "
+             + "where the model can name them — a preview; writes only on "
+             + "confirm"),
         Item("?", "this list"),
     ]
 
