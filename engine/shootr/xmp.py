@@ -226,12 +226,23 @@ class DevelopConflict(RuntimeError):
 
 CRS_NS = 'xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"'
 
+# Lightroom's tonal sliders are INTEGER-valued, and it silently ignores a
+# fractional value rather than rounding it. Verified against the user's own
+# catalog (2026-09-08): across 560 edited photos every modelled parameter is
+# stored as an integer except `Exposure2012`. Writing "+29.09" for Blacks2012
+# therefore delivered nothing — the symptom was "only exposure was applied",
+# because exposure is the one genuinely decimal slider.
+DECIMAL_CRS_PARAMS: frozenset[str] = frozenset({
+    "Exposure2012", "CustomTemperature", "CustomTint", "SharpenRadius",
+})
 
-def _fmt_crs(value: float) -> str:
-    if isinstance(value, float) and not value.is_integer():
-        s = f"{value:+.2f}".rstrip("0").rstrip(".")
-        return s
-    return str(int(value))
+
+def _fmt_crs(name: str, value: float) -> str:
+    """Format as Lightroom does: two decimals for the decimal sliders,
+    rounded integers for everything else."""
+    if name in DECIMAL_CRS_PARAMS:
+        return f"{float(value):+.2f}"
+    return f"{round(float(value)):+d}"
 
 
 def write_develop(xmp_path: Path, params: dict[str, float],
@@ -263,7 +274,8 @@ def write_develop(xmp_path: Path, params: dict[str, float],
     if raw_version:
         text = _insert_attr(text, f'crs:Version="{raw_version}"')
     for name in sorted(params):
-        text = _insert_attr(text, f'crs:{name}="{_fmt_crs(params[name])}"')
+        text = _insert_attr(text,
+                            f'crs:{name}="{_fmt_crs(name, params[name])}"')
     _atomic_write(xmp_path, text)
     return xmp_path
 

@@ -181,7 +181,7 @@ class TestDevelopWriter:
         write_develop(p, {"Exposure2012": 0.3, "Blacks2012": -12.0},
                       process_version="15.4", backup_dir=tmp_path / "bk")
         text = p.read_text()
-        assert 'crs:Exposure2012="+0.3"' in text
+        assert 'crs:Exposure2012="+0.30"' in text
         assert 'crs:Blacks2012="-12"' in text
         assert 'crs:ProcessVersion="15.4"' in text
         assert 'xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"' \
@@ -216,7 +216,7 @@ class TestDevelopWriter:
         text = p.read_text()
         assert 'myapp:custom="keep-me"' in text
         assert 'xmp:Rating="5"' in text
-        assert 'crs:Dehaze="15"' in text
+        assert 'crs:Dehaze="+15"' in text
         backups = list((tmp_path / "bk").rglob("*.xmp"))
         assert len(backups) == 1
 
@@ -257,3 +257,25 @@ def test_develop_write_stamps_both_versions(tmp_path):
     p2 = tmp_path / "IMG_2.xmp"
     write_develop(p2, {"Dehaze": 12.0}, "15.4", tmp_path / "bk")
     assert "crs:Version=" not in p2.read_text()
+
+
+def test_integer_sliders_are_written_as_integers(tmp_path):
+    """Lightroom's tonal sliders are integer-valued and it IGNORES a
+    fractional value rather than rounding it. Measured on the user's catalog:
+    every modelled parameter is stored as an integer except Exposure2012.
+    Writing '-46.06' for Highlights2012 delivered nothing at all — the bug
+    presented as 'only exposure was applied'."""
+    from shootr.xmp import write_develop
+
+    p = tmp_path / "IMG_1.xmp"
+    write_develop(p, {"Highlights2012": -46.06, "Shadows2012": 32.2,
+                      "Vibrance": 22.01, "Blacks2012": 29.09,
+                      "Exposure2012": -0.32}, "15.4", tmp_path / "bk")
+    text = p.read_text()
+    assert 'crs:Highlights2012="-46"' in text
+    assert 'crs:Shadows2012="+32"' in text
+    assert 'crs:Vibrance="+22"' in text
+    assert 'crs:Blacks2012="+29"' in text
+    # Exposure keeps its decimals — it is the one genuinely decimal slider.
+    assert 'crs:Exposure2012="-0.32"' in text
+    assert "." not in text.split('crs:Highlights2012="')[1].split('"')[0]
