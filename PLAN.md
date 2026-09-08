@@ -302,7 +302,12 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
   excluded**: `analysis.frame.as_shot_wb` is a recorded analyzer-contract gap (§2.2)
 - ~~Look-family clustering~~ — `style.cluster_families` (agglomerative, correlation
   distance, no scipy) + trait labels; family thumbnails = UI work, pending
-- ~~k-NN predictor~~ — family-filtered softmax blend, confidence first-class (§4)
+- ~~k-NN predictor~~ — family-filtered softmax blend, confidence first-class (§4).
+  **Holds across lighting** (`docs/benchmarks/2026-09-08-style-across-lighting.md`):
+  0.30–0.32 EV error from daylight to ISO 6400, and its margin over the median *grows*
+  in mixed light (45% better on highlights in dim). Similarity is embedding-only —
+  §4's tabular features (histogram, clipping, as-shot WB, ISO, skin tone) are the
+  unbuilt next lever
 - ~~Guardrails~~ — confidence gate (abstain), clamp to family range, PV written with
   every prediction, **highlight-clip sanity check** (no positive exposure onto a frame
   already clipping >2%, reported via `Prediction.damped` and rendered in both clients);
