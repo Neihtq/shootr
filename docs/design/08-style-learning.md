@@ -232,6 +232,65 @@ both); the keyboard path in the native client follows §12's existing bindings.
 
 ---
 
+## 7b. Style models are user-created objects (design 2026-09-08)
+
+Everything above describes *a* predictor. This section defines how the user
+controls it, because the single-shoot history this was first measured on is
+not representative of a career and no automatic choice made from it deserves
+to be permanent.
+
+A **style model** is a named, persisted object the user creates:
+
+| field | meaning |
+|---|---|
+| `name` | the user's label ("Weddings 2024–26", "Landscape") |
+| `method` | which learner — see the registry below |
+| `scope` | which libraries the edit history comes from: one, several, or all |
+| `params` | method knobs (k and τ for retrieval, λ for ridge) |
+| `metrics` | what §7's harness measured **for this model**, so models are comparable |
+| `trained_at`, `process_version`, `history_n` | provenance |
+
+Four operations, all explicit:
+
+1. **Learn** — create a model: pick a name, a method, and the libraries to
+   learn from. Nothing is learned implicitly on import.
+2. **Relearn** — re-run the same model against current history. This is how
+   new shoots take effect; the button exists because the user decides when
+   their style has moved, not us.
+3. **Compare** — models sit side by side with the metrics from the same
+   harness, so "is the new method actually better *for me*" is answered by
+   numbers on the user's own edits.
+4. **Choose** — which model predicts for a given shoot.
+
+### Method registry
+
+Methods are pluggable and each declares whether it needs a fitting step:
+
+| method | fits? | why it's offered |
+|---|---|---|
+| `knn` | no | inspectable ("edited like these photos"), works at hundreds of photos, improves the moment history grows |
+| `ridge` | yes | measured to beat retrieval on exposure at every history size tested (`2026-09-08-knn-vs-trained.md`) |
+| `gbt` | yes | the §4 Phase-2 candidate; expected to matter in the thousands, not yet implemented |
+
+**No method is privileged and none is auto-selected.** The measurement that
+found ridge better on exposure came from one wedding; treating it as a
+conclusion would be exactly the overreach this section exists to prevent. The
+harness reports, the user decides.
+
+### Invariants that survive method choice
+
+- §6's guardrails apply to **every** method: clamping to observed range,
+  confidence gate and abstention, the highlight-clip check, per-parameter
+  opt-out, never overwriting user develop settings.
+- §7a's inspectability requirement holds: a prediction must say where it came
+  from. Retrieval names neighbour photos; a fitted method must say it was
+  fitted, and from how much history — an unexplained number is not acceptable
+  just because it is more accurate.
+- One process version per model (§6): scope may span catalogs, but history is
+  narrowed to a single PV before fitting, and the model records which.
+
+---
+
 ## 8. Open questions
 
 - **Adobe's baseline rendering** is proprietary; "as-shot baseline" is therefore
