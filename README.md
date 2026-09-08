@@ -136,6 +136,52 @@ regroup and re-cull. Full rules: `docs/design/06-culling.md`.
 rejects write nothing). In Lightroom: select the photos, then
 *Metadata → Read Metadata from Files*.
 
+### Learning your editing style (optional)
+
+Shootr can predict develop settings for new photos from edits you have
+already made. It reads them from a **copy** of a Lightroom catalog — never the
+live file:
+
+```bash
+.venv/bin/python engine/tools/import_lr_history.py \
+    --catalog "~/Pictures/Lightroom/Lightroom Catalog.lrcat"
+```
+
+The catalog's photos must already be in a library and analyzed, since
+similarity is computed from the scene embedding. Import reports how many rows
+it matched and how many it could not.
+
+Then create a **style model** — nothing is learned until you ask. A model is
+a name, a method, and the libraries it learns from (one, several, or all):
+
+- **`knn`** (retrieval) — finds your most visually similar edited photos and
+  blends them. It can name them, so every prediction shows *"edited like
+  these five photos"*.
+- **`ridge`** (fitted) — fits one model over your whole history. Sometimes
+  more accurate, but it cannot point at examples; a prediction only reports
+  how much history it was fitted from.
+
+Models are compared on **your own edits**, with whole bursts held out so
+near-duplicate frames can't flatter retrieval, against the baseline of
+"apply this look's median edit to everything". Nothing is auto-selected —
+the numbers are shown and you choose. Re-run **Relearn** after importing new
+shoots; that is when new edits take effect.
+
+What it deliberately does **not** do:
+
+- **White balance is never predicted.** Kelvin mostly describes the light,
+  not your taste, so temperature and tint stay yours.
+- **Brushes, gradients and AI masks are never transferred**, and crop and
+  straighten are never predicted — those are per-photo decisions.
+- **It abstains** when a photo resembles nothing you have edited, rather than
+  guessing, and predictions are clamped to the range you have actually used.
+- **It never overwrites your develop settings.** A sidecar that already has
+  them is reported as a conflict and skipped — there is no override.
+
+Predicted values land in `.xmp` sidecars as `crs:` settings, so the same
+*Metadata → Read Metadata from Files* step applies. Design and measured
+accuracy: `docs/design/08-style-learning.md`, `docs/benchmarks/`.
+
 ### Web UI (optional)
 
 ```bash
