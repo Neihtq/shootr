@@ -341,6 +341,15 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
   to `~/Pictures/shootr-style-test/` as hardlink + sidecar, so the library is untouched.
   Open question that only a human can answer: is this a usable starting point?
 - JPEG+RAW pair validation (trends/direction, not pixel equality) — needs exported pairs
+- ~~Style models the user creates and controls~~ (2026-09-08, design 08 §7b) —
+  `style_model` table + `shootr.style_models`; learn / relearn / compare / choose over
+  `/api/style/models`, scope = any set of libraries (`[]` = all), method registry
+  (`knn`, `ridge`) with none auto-selected. Metrics come from one harness, **held out by
+  shot group** so bursts can't flatter retrieval, and λ is cross-validated rather than
+  defaulted. Guardrails and provenance survive method choice: every method clamps to
+  observed history, honours the clip check and opt-outs, and a fitted prediction reports
+  `fitted_from_history_n` since it cannot name neighbours
+- Client surface for style models (picker, relearn, compare) — both clients, not started
 - ⚠ **Trained model: measured, and it wins on ONE parameter already**
   (`docs/benchmarks/2026-09-08-knn-vs-trained.md`). Ridge over the scene embedding
   beats k-NN on `Exposure2012` at every history size (0.303 vs 0.344 EV at n=560),

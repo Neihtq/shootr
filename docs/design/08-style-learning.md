@@ -259,7 +259,12 @@ Four operations, all explicit:
    their style has moved, not us.
 3. **Compare** — models sit side by side with the metrics from the same
    harness, so "is the new method actually better *for me*" is answered by
-   numbers on the user's own edits.
+   numbers on the user's own edits. **Held out by shot group**, because
+   burst siblings are near-duplicates: letting them straddle a split hands
+   retrieval a copy of the answer. Measured on the reference catalog, sibling
+   leakage moved k-NN's exposure error from 0.34 to 0.25 EV — enough to flip
+   which method a user would choose, which is why the in-app comparison
+   splits by group rather than by photo.
 4. **Choose** — which model predicts for a given shoot.
 
 ### Method registry

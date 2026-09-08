@@ -22,7 +22,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import db, helper, jobs, overrides, pipeline, style, xmp
+from . import (db, helper, jobs, overrides, pipeline, style,
+               style_models, xmp)
 from .ingest import (backfill_metadata, create_library as
                      ingest_create_library, propose_shoots, resolve_library,
                      scan)
@@ -71,11 +72,20 @@ class ExportIn(BaseModel):
 class StylePredictIn(BaseModel):
     family: int | None = None      # None → auto-suggest (08 §3)
     photo_ids: list[int] | None = None  # None → latest selection's picks
+    model_id: int | None = None    # None → the active model (08 §7b)
 
 
 class StyleExportIn(BaseModel):
     family: int
     photo_ids: list[int]
+    model_id: int | None = None
+
+
+class StyleModelIn(BaseModel):
+    name: str
+    method: str
+    library_ids: list[int] = []          # [] = learn from every library
+    params: dict = {}
 
 
 class StylePrefsIn(BaseModel):
@@ -870,6 +880,109 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
         finally:
             c.close()
 
+    # -- style models (design 08 §7b) -----------------------------------------
+
+    def _model_payload(m) -> dict:
+        return {"id": m.id, "name": m.name, "method": m.method,
+                "library_ids": m.library_ids, "params": m.params,
+                "metrics": m.metrics, "history_n": m.history_n,
+                "process_version": m.process_version,
+                "trained_at": m.trained_at, "trained": m.trained,
+                "is_active": m.is_active,
+                # Fitted methods lose the "edited like these photos"
+                # explanation, so the client must be able to say so (§7a).
+                "explains_by_neighbours": m.method == "knn"}
+
+    @app.get("/api/style/methods")
+    def style_methods():
+        """The registry (§7b). No method is privileged or auto-selected."""
+        return [{"method": k, "default_params": v,
+                 "fits": k != "knn",
+                 "explains_by_neighbours": k == "knn"}
+                for k, v in style_models.DEFAULT_PARAMS.items()]
+
+    @app.get("/api/style/models")
+    def list_style_models():
+        c = conn()
+        try:
+            return [_model_payload(m) for m in style_models.list_models(c)]
+        finally:
+            c.close()
+
+    @app.post("/api/style/models")
+    def create_style_model(body: StyleModelIn):
+        """Create AND learn — the explicit action; nothing trains on import."""
+        c = conn()
+        try:
+            try:
+                mid = style_models.create(c, body.name, body.method,
+                                          body.library_ids, body.params)
+            except style_models.UnknownMethod as e:
+                raise error(400, "unknown_method", str(e),
+                            detail={"methods": list(style_models.METHODS)})
+            try:
+                m = style_models.train(c, mid)
+            except style_models.ModelNotTrained as e:
+                # Keep the row: the scope may simply have no history imported
+                # yet, and deleting it would discard the user's own choice.
+                raise error(409, "insufficient_history", str(e),
+                            retryable=True, detail={"model_id": mid})
+            if style_models.active(c) is None:
+                style_models.set_active(c, mid)
+                m = style_models.get(c, mid)
+            return _model_payload(m)
+        finally:
+            c.close()
+
+    @app.post("/api/style/models/{model_id}/train")
+    def train_style_model(model_id: int):
+        """Relearn: same model, current history. This is how new shoots take
+        effect — on the user's say-so, not silently."""
+        c = conn()
+        try:
+            try:
+                return _model_payload(style_models.train(c, model_id))
+            except style_models.ModelNotTrained as e:
+                raise error(409, "insufficient_history", str(e),
+                            retryable=True)
+        finally:
+            c.close()
+
+    @app.post("/api/style/models/{model_id}/activate")
+    def activate_style_model(model_id: int):
+        c = conn()
+        try:
+            if style_models.get(c, model_id) is None:
+                raise error(404, "file_missing", f"no model {model_id}")
+            style_models.set_active(c, model_id)
+            return _model_payload(style_models.get(c, model_id))
+        finally:
+            c.close()
+
+    @app.delete("/api/style/models/{model_id}")
+    def delete_style_model(model_id: int):
+        c = conn()
+        try:
+            style_models.delete(c, model_id)
+            return {"deleted": model_id}
+        finally:
+            c.close()
+
+    def _resolve_model(c, model_id: int | None):
+        """The requested model, else the active one, else None — meaning the
+        implicit k-NN over all history, so the feature works before the user
+        has created anything without pretending that was a considered choice.
+        """
+        m = (style_models.get(c, model_id) if model_id
+             else style_models.active(c))
+        if model_id and m is None:
+            raise error(404, "file_missing", f"no model {model_id}")
+        if m is not None and not m.trained:
+            raise error(409, "model_not_trained",
+                        f"model {m.id} ({m.name}) has not been learned yet",
+                        retryable=True)
+        return m
+
     # -- style (design 08) ----------------------------------------------------
 
     STYLE_PREF_KEY = "style.excluded_params"
@@ -925,7 +1038,7 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
         pvs = [s.process_version for s in samples if s.process_version]
         return max(set(pvs), key=pvs.count) if pvs else "15.4"
 
-    def _style_history(c) -> list:
+    def _style_history(c):
         """All imported edit history — families span shoots by design;
         looks are the user's, not a shoot's."""
         samples = style.load_history(c)
@@ -945,14 +1058,13 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                         "cannot be blended with them",
                         retryable=True)
         style.cluster_families(sel.samples)
-        app.state.style_pv_selection = sel
-        return sel.samples
+        return sel
 
     @app.get("/api/style/families")
     def style_families():
         c = conn()
         try:
-            samples = _style_history(c)
+            samples = _style_history(c).samples
             fams = sorted({s.family for s in samples})
             return [{
                 "id": f,
@@ -993,7 +1105,17 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
         photos the blend came from — inspectable, never opaque (08 §4)."""
         c = conn()
         try:
-            samples = _style_history(c)
+            model = _resolve_model(c, body.model_id)
+            sel = (style_models.history_for(c, model) if model
+                   else _style_history(c))
+            samples = sel.samples
+            if model:
+                if len(samples) < 10:
+                    raise error(409, "insufficient_history",
+                                f"model {model.name}'s libraries hold "
+                                f"{len(samples)} edited photos; need 10",
+                                retryable=True)
+                style.cluster_families(samples)
             ids = body.photo_ids
             if ids is None:
                 sel = c.execute(
@@ -1021,6 +1143,24 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                     out.append({"photo_id": pid, "abstained": True,
                                 "reason": "not_analyzed"})
                     continue
+                if model and model.method != "knn":
+                    # A fitted method: no neighbour photos to name, so the
+                    # payload says how it was produced instead — accuracy
+                    # does not buy the right to be unexplained (§7a).
+                    params = style_models.predict_with(
+                        model.method, model.fit, model.params, embs[pid],
+                        samples, family, clipped_hi=clipped.get(pid),
+                        excluded_params=excluded)
+                    out.append({
+                        "photo_id": pid, "abstained": params is None,
+                        "reason": None if params else "model_abstained",
+                        "confidence": None,
+                        "params": params or {},
+                        "damped": {}, "excluded": {},
+                        "neighbor_photo_ids": [],
+                        "fitted_from_history_n": model.history_n,
+                    })
+                    continue
                 pred = style.predict(embs[pid], samples, family,
                                      clipped_hi=clipped.get(pid),
                                      excluded_params=excluded)
@@ -1033,8 +1173,8 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                     "excluded": pred.excluded,
                     "neighbor_photo_ids": pred.neighbor_ids,
                 })
-            sel = app.state.style_pv_selection
             return {"family": family, "process_version": pv,
+                    "model": _model_payload(model) if model else None,
                     "excluded_params": sorted(excluded),
                     "history": {
                         "used": len(sel.samples),
@@ -1052,7 +1192,11 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
         reported, skipped, never overwritten (no override exists, 08 §6)."""
         c = conn()
         try:
-            samples = _style_history(c)
+            model = _resolve_model(c, body.model_id)
+            samples = (style_models.history_for(c, model).samples
+                       if model else _style_history(c).samples)
+            if model:
+                style.cluster_families(samples)
             embs = _shoot_embeddings(c, shoot_id, body.photo_ids)
             pv = _history_pv(samples)
             clipped = _clipped_hi(c, body.photo_ids)
@@ -1070,9 +1214,20 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                     abstained.append({"photo_id": pid,
                                       "reason": "not_analyzed"})
                     continue
-                pred = style.predict(embs[pid], samples, body.family,
-                                     clipped_hi=clipped.get(pid),
-                                     excluded_params=excluded)
+                if model and model.method != "knn":
+                    params = style_models.predict_with(
+                        model.method, model.fit, model.params, embs[pid],
+                        samples, body.family, clipped_hi=clipped.get(pid),
+                        excluded_params=excluded)
+                    if not params:
+                        abstained.append({"photo_id": pid,
+                                          "reason": "model_abstained"})
+                        continue
+                    pred = style.Prediction(params, 1.0, [])
+                else:
+                    pred = style.predict(embs[pid], samples, body.family,
+                                         clipped_hi=clipped.get(pid),
+                                         excluded_params=excluded)
                 if pred.abstained:
                     abstained.append({"photo_id": pid,
                                       "reason": pred.reason})
@@ -1089,6 +1244,7 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                                       "path": str(target)})
             return {"written": written, "abstained": abstained,
                     "conflicts": conflicts,
+                    "model": _model_payload(model) if model else None,
                     "excluded_params": sorted(excluded),
                     "note": ("conflicting sidecars carry the user's own "
                              "develop settings and were not touched")}

@@ -224,8 +224,29 @@ VALUES ('style.excluded_params', '["ColorGradeMidtoneHue"]', datetime('now'))
 ON CONFLICT(key) DO NOTHING;
 """
 
+# Style models the user creates and controls (design 08 §7b). A model is a
+# method + a scope of libraries + its measured metrics, so "is this new method
+# better for me" is answered on the user's own edits rather than assumed from
+# whatever shoot happened to be measured first.
+_MIGRATION_6 = """
+CREATE TABLE style_model (
+  id              INTEGER PRIMARY KEY,
+  name            TEXT NOT NULL,
+  method          TEXT NOT NULL,
+  library_ids     TEXT NOT NULL,   -- JSON array; [] = every library
+  params          TEXT NOT NULL,   -- JSON method knobs
+  metrics         TEXT,            -- JSON, from the §7 harness
+  fit             TEXT,            -- JSON coefficients (fitted methods only)
+  history_n       INTEGER,
+  process_version TEXT,
+  created_at      TEXT NOT NULL,
+  trained_at      TEXT,
+  is_active       INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 MIGRATIONS: list[str] = [_MIGRATION_1, _MIGRATION_2, _MIGRATION_3,
-                         _MIGRATION_4, _MIGRATION_5]
+                         _MIGRATION_4, _MIGRATION_5, _MIGRATION_6]
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
