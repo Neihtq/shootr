@@ -310,6 +310,10 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
 - ~~Baseline comparison~~ (§7) — run honest (group-excluded); median wins only
   ColorGradeMidtoneHue → first opt-out candidate
 - ~~Evaluation~~ — `engine/tools/eval_style.py`; re-run per new shoot imported
+- ~~Multiple catalogs~~ — history spans libraries by design and k-NN needs no retraining,
+  so a new catalog improves predictions as soon as its photos are analyzed and imported.
+  Guarded 2026-09-08: history is scoped to one process version first (08 §6), because
+  blending PV 11 edits with PV 15 edits describes neither
 - ~~XMP `crs:` writer~~ — `xmp.write_develop` via the `07 §1` Rule-2 protocol;
   `ProcessVersion` stamped on every write
 - ~~API endpoints~~ — `/api/style/families` (traits + sample thumbnails + median),

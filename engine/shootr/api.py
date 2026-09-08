@@ -910,6 +910,11 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
         finally:
             c.close()
 
+    def _pv_scoped(samples):
+        """History narrowed to one process version (08 §6) — the guard that
+        matters as soon as a second catalog is imported."""
+        return style.select_process_version(samples)
+
     def _history_raw_version(samples) -> str | None:
         vs = [s.raw_version for s in samples if s.raw_version]
         return max(set(vs), key=vs.count) if vs else None
@@ -929,8 +934,19 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                         f"style needs edit history; have {len(samples)} "
                         "edited photos with embeddings (import a catalog)",
                         retryable=True)
-        style.cluster_families(samples)
-        return samples
+        # One process version only: the same Exposure2012 renders differently
+        # across versions, so mixing them describes neither (08 §6).
+        sel = _pv_scoped(samples)
+        if len(sel.samples) < 10:
+            raise error(409, "insufficient_history",
+                        f"only {len(sel.samples)} edited photos are on "
+                        f"process version {sel.process_version}; "
+                        f"{sel.excluded_other_pv} are on another version and "
+                        "cannot be blended with them",
+                        retryable=True)
+        style.cluster_families(sel.samples)
+        app.state.style_pv_selection = sel
+        return sel.samples
 
     @app.get("/api/style/families")
     def style_families():
@@ -1017,8 +1033,14 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                     "excluded": pred.excluded,
                     "neighbor_photo_ids": pred.neighbor_ids,
                 })
+            sel = app.state.style_pv_selection
             return {"family": family, "process_version": pv,
                     "excluded_params": sorted(excluded),
+                    "history": {
+                        "used": len(sel.samples),
+                        "excluded_other_process_version":
+                            sel.excluded_other_pv,
+                        "process_version_unverified": sel.unverified_pv},
                     "predictions": out}
         finally:
             c.close()

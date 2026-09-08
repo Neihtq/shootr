@@ -145,7 +145,7 @@ Style prediction writes to the user's files (§07), so it fails safe:
 | **Sanity check** | predicted exposure that would clip > 2% of highlights is rejected/damped |
 | **Per-parameter opt-out** | user can disable prediction for any parameter (e.g. keep WB manual) |
 | **Never overwrite existing edits** | §07 Rule 2 protocol, unconditionally |
-| **Process-version match** | refuse to apply predictions learned on a different PV (§07.4) |
+| **Process-version match** | refuse to apply predictions learned on a different PV (§07.4). Implemented 2026-09-08 (`select_process_version`): history is narrowed to one PV before clustering *and* prediction — this is what makes importing a second, older catalog safe rather than silently corrupting the blend. A *known* different PV is excluded; a *missing* PV is kept but counted, since absence is not evidence of incompatibility, and the prediction response reports both numbers. |
 
 Clamping deserves emphasis: an extrapolating regressor producing +3 EV because a photo sits
 outside the training distribution is both plausible and destructive. Bounding to observed

@@ -123,3 +123,42 @@ def test_negative_exposure_is_not_damped_on_a_clipping_frame():
         s.family = 0
     pred = predict(emb(99, a), samples, family=0, clipped_hi=0.2)
     assert pred.params["Exposure2012"] < 0 and not pred.damped
+
+
+def test_history_is_scoped_to_one_process_version():
+    """08 §6: the same Exposure2012 renders differently across process
+    versions, so a second imported catalog on an older PV must not be blended
+    with the current one — it would describe neither."""
+    from shootr.style import dominant_process_version, select_process_version
+
+    a = np.zeros(DIM); a[0] = 1.0
+    modern = [sample(i, 0.5, 10.0, emb(i, a)) for i in range(8)]
+    old = [sample(100 + i, -0.5, -10.0, emb(100 + i, a)) for i in range(3)]
+    for s in old:
+        s.process_version = "6.7"
+    unknown = [sample(200, 0.4, 9.0, emb(200, a))]
+    unknown[0].process_version = None
+
+    all_samples = modern + old + unknown
+    assert dominant_process_version(all_samples) == "15.4"
+    sel = select_process_version(all_samples)
+    assert sel.process_version == "15.4"
+    assert sel.excluded_other_pv == 3        # the old catalog, set aside
+    # Absence of a PV is not evidence of incompatibility — kept, but counted
+    # so a caller can say what it could not verify.
+    assert sel.unverified_pv == 1
+    assert len(sel.samples) == 9
+    assert all(s.process_version != "6.7" for s in sel.samples)
+
+
+def test_explicit_process_version_can_be_requested():
+    from shootr.style import select_process_version
+
+    a = np.zeros(DIM); a[0] = 1.0
+    modern = [sample(i, 0.5, 10.0, emb(i, a)) for i in range(5)]
+    old = [sample(100 + i, -0.5, -10.0, emb(100 + i, a)) for i in range(4)]
+    for s in old:
+        s.process_version = "6.7"
+    sel = select_process_version(modern + old, pv="6.7")
+    assert sel.process_version == "6.7" and len(sel.samples) == 4
+    assert sel.excluded_other_pv == 5

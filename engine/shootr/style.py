@@ -116,6 +116,47 @@ def load_history(conn: sqlite3.Connection,
     return samples
 
 
+def dominant_process_version(samples: list[StyleSample]) -> str | None:
+    """The process version most of the history was edited under."""
+    pvs = [s.process_version for s in samples if s.process_version]
+    return max(set(pvs), key=pvs.count) if pvs else None
+
+
+@dataclass
+class PVSelection:
+    samples: list[StyleSample]
+    process_version: str | None
+    excluded_other_pv: int      # known to be a DIFFERENT process version
+    unverified_pv: int          # no ProcessVersion recorded at all
+
+
+def select_process_version(samples: list[StyleSample],
+                           pv: str | None = None) -> PVSelection:
+    """Keep only history compatible with one process version (design 08 §6).
+
+    This matters the moment a second catalog is imported: the same
+    `Exposure2012` renders differently across process versions, so blending
+    PV 11 edits with PV 15 edits produces numbers that describe neither.
+    Samples with a *known, different* PV are excluded. Samples with **no**
+    recorded PV are kept — absence is not evidence of incompatibility — but
+    counted, so a caller can say how much of the history it could not verify
+    rather than implying certainty.
+    """
+    pv = pv or dominant_process_version(samples)
+    if pv is None:
+        return PVSelection(samples, None, 0, len(samples))
+    keep, other, unknown = [], 0, 0
+    for s in samples:
+        if s.process_version is None:
+            keep.append(s)
+            unknown += 1
+        elif s.process_version == pv:
+            keep.append(s)
+        else:
+            other += 1
+    return PVSelection(keep, pv, other, unknown)
+
+
 # --- Look families (design 08 §3): discovered from edits, not assumed -------
 
 
