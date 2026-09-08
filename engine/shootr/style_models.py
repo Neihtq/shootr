@@ -189,7 +189,8 @@ def _folds(n: int, k: int = CV_FOLDS,
 
 
 def _fit_ridge_params(X: np.ndarray, Y: np.ndarray, lam: float | None,
-                      groups: list[int] | None = None) -> tuple[dict, float]:
+                      groups: list[int] | None = None,
+                      names: list[str] | None = None) -> tuple[dict, float]:
     """Per-parameter coefficients, choosing λ by CV when not pinned."""
     if lam is None:
         best: tuple[float, float] | None = None
@@ -214,7 +215,7 @@ def _fit_ridge_params(X: np.ndarray, Y: np.ndarray, lam: float | None,
                 best = (float(np.mean(errs)), cand)
         lam = best[1] if best else 1.0
     coefs = {}
-    for j, name in enumerate(style.TONAL_PARAMS):
+    for j, name in enumerate(names or []):
         mask = ~np.isnan(Y[:, j])
         if mask.sum() < 12:   # too little signal → abstain on this param
             continue
@@ -250,17 +251,18 @@ def train(conn: sqlite3.Connection, model_id: int) -> StyleModel:
     fit: dict[str, Any] = {}
     if model.method == "ridge":
         X = np.stack([s.embedding for s in samples])
-        Y = np.stack([s.deltas for s in samples])
+        Y, names = style._matrix(samples)
         coefs, lam = _fit_ridge_params(X, Y, model.params.get("lambda"),
-                                       groups=groups)
+                                       groups=groups, names=names)
         fit["coefficients"] = coefs
         fit["lambda"] = lam
         # Clamps come from history, not from the fit: §6's guarantee that the
         # worst case is a bland edit must survive the method change.
-        fit["ranges"] = {
-            name: [float(np.nanmin(Y[:, j])), float(np.nanmax(Y[:, j]))]
-            for j, name in enumerate(style.TONAL_PARAMS)
-            if not np.isnan(Y[:, j]).all()}
+        with style._nan_ok():
+            fit["ranges"] = {
+                name: [float(np.nanmin(Y[:, j])), float(np.nanmax(Y[:, j]))]
+                for j, name in enumerate(names)
+                if not np.isnan(Y[:, j]).all()}
 
     metrics = evaluate(samples, model.method, fit, model.params,
                        groups=groups)
@@ -300,11 +302,11 @@ def evaluate(samples: list[style.StyleSample], method: str,
     fold_fit: dict[int, dict] = {}
     if method != "knn":
         X = np.stack([s.embedding for s in samples])
-        Y = np.stack([s.deltas for s in samples])
+        Y, names = style._matrix(samples)
         lam = (fit or {}).get("lambda") or params.get("lambda") or 1.0
         for f in _folds(len(samples), groups=groups):
             tr = np.setdiff1d(np.arange(len(samples)), f)
-            coefs, _ = _fit_ridge_params(X[tr], Y[tr], lam)
+            coefs, _ = _fit_ridge_params(X[tr], Y[tr], lam, names=names)
             held = {"coefficients": coefs, "ranges": (fit or {}).get("ranges")}
             for i in f.tolist():
                 fold_fit[i] = held
@@ -321,10 +323,7 @@ def evaluate(samples: list[style.StyleSample], method: str,
             abstained += 1
             continue
         med = medians.get(s.family, {})
-        for j, name in enumerate(style.TONAL_PARAMS):
-            truth = s.deltas[j]
-            if np.isnan(truth):
-                continue
+        for name, truth in s.deltas.items():
             if name in pred:
                 err.setdefault(name, []).append(abs(pred[name] - truth))
             if name in med:

@@ -71,7 +71,8 @@ def main() -> None:
     rng.shuffle(groups)
     print(f"{len(samples)} history photos across {len(groups)} shot groups\n")
 
-    idx = {n: style.TONAL_PARAMS.index(n) for n in REPORT_PARAMS}
+    params = style.params_of(samples)
+    idx = {n: params.index(n) for n in REPORT_PARAMS if n in params}
     header = "  ".join(f"{n[:11]:>11}" for n in REPORT_PARAMS)
     print(f"{'history':>8} {'method':>8}  {header}")
 
@@ -96,7 +97,7 @@ def main() -> None:
             # A test photo has no family of its own: assign it the family
             # whose members it most resembles, exactly as the API does.
             Xtr = np.stack([s.embedding for s in train])
-            ytr_all = np.stack([s.deltas for s in train])
+            ytr_all, _tr_names = style._matrix(train, params)
 
             ridge_models = {}
             for name, j in idx.items():

@@ -52,10 +52,7 @@ def main() -> None:
         if pred.abstained:
             abstained += 1
             continue
-        for j, name in enumerate(style.TONAL_PARAMS):
-            truth = s.deltas[j]
-            if np.isnan(truth):
-                continue
+        for name, truth in s.deltas.items():
             if name in pred.params:
                 err_knn[name].append(abs(pred.params[name] - truth))
                 if abs(truth) > 1e-9:
@@ -72,7 +69,7 @@ def main() -> None:
           f"{'kNN dir':>8} {'med dir':>8}   n")
     wins = 0
     comparable = 0
-    for name in style.TONAL_PARAMS:
+    for name in style.params_of(samples):
         if not err_knn.get(name):
             continue
         mk = float(np.mean(err_knn[name]))

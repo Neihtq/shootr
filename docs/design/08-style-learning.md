@@ -17,6 +17,20 @@ regress against.
 subject/sky masks. They're spatial and specific to one photo's content. Excluded as a
 stated boundary, not a gap to fill later (§07.4).
 
+**The modelled parameter set is DERIVED from the user's history, not curated**
+(2026-09-08, at the user's insistence: "ALL settings"). A hand-picked list is guaranteed
+to omit whatever matters most to someone — the first version modelled 13 parameters and
+ignored this user's entire HSL signature (yellows and greens shifted and desaturated,
+orange luminance lifted, on ~400 of 560 photos), which is precisely why their test edits
+came out correctly exposed and still not theirs. `style.modelable()` now admits every
+numeric global parameter the catalog records, minus four categories excluded **with
+reasons**: crop/geometry (compositional intent, §1), absolute white balance (describes the
+light, not the taste — §2.2's missing as-shot baseline), local adjustments (above), and
+bookkeeping or seeds (a blended random seed means nothing). On the reference catalog that
+is 88 parameters instead of 13, including split toning, sharpening, grain, vignette and
+the legacy pre-2012 sliders. Non-numeric values (camera profile, ConvertToGrayscale) are
+never predicted: a blend of strings is meaningless.
+
 **Also not attempted:** crop and straighten. Crop is compositional intent, not style —
 predicting it would mean second-guessing the photographer on the one decision most clearly
 theirs.

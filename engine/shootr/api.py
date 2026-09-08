@@ -1004,23 +1004,40 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
 
     @app.get("/api/style/preferences")
     def style_preferences():
+        """`modelable_params` is what the user's OWN history contains — the
+        set is derived from their catalog, not a list we curated, so it grows
+        as they use more of Lightroom."""
         c = conn()
         try:
+            samples = style.load_history(c)
             return {"excluded_params": sorted(_excluded_params(c)),
-                    "modelable_params": style.TONAL_PARAMS}
+                    "modelable_params": style.params_of(samples)}
         finally:
             c.close()
 
     @app.put("/api/style/preferences")
     def set_style_preferences(body: StylePrefsIn):
-        unknown = [p for p in body.excluded_params
-                   if p not in style.TONAL_PARAMS]
-        if unknown:
-            raise error(400, "unknown_param",
-                        f"not modelable parameters: {unknown}",
-                        detail={"modelable_params": style.TONAL_PARAMS})
         c = conn()
         try:
+            # Two ways a name can be wrong, and the message says which:
+            # policy forbids it (geometry, white balance, local edits), or the
+            # user's history simply has no such parameter — usually a typo,
+            # and excluding it would silently do nothing.
+            available = set(style.params_of(style.load_history(c)))
+            forbidden = [p for p in body.excluded_params
+                         if not style.modelable(p)]
+            absent = [p for p in body.excluded_params
+                      if style.modelable(p) and p not in available]
+            if forbidden or absent:
+                raise error(
+                    400, "unknown_param",
+                    ("never predicted by policy: " + ", ".join(forbidden)
+                     if forbidden else "") +
+                    ("; " if forbidden and absent else "") +
+                    ("not present in your edit history: " + ", ".join(absent)
+                     if absent else ""),
+                    detail={"forbidden": forbidden, "absent": absent,
+                            "modelable_params": sorted(available)})
             with c:
                 c.execute(
                     "INSERT INTO preference (key, value, updated_at) "

@@ -38,14 +38,63 @@ def _nan_ok():
         warnings.simplefilter("ignore", RuntimeWarning)
         yield
 
-# Modelable per-photo tonal params: modern crs sliders whose Adobe default
-# is 0 (delta = value). Ordered; prediction and eval use this order.
-TONAL_PARAMS: list[str] = [
-    "Exposure2012", "Contrast2012", "Highlights2012", "Shadows2012",
-    "Whites2012", "Blacks2012", "Texture", "Clarity2012", "Dehaze",
-    "Vibrance", "Saturation",
-    "ColorGradeMidtoneHue", "ColorGradeMidtoneSat",
-]
+# ---------------------------------------------------------------------------
+# Which parameters are modelled — DERIVED from the user's own history, not a
+# curated list (user requirement, 2026-09-08: "ALL settings"). A curated list
+# is guaranteed to miss the parameter that matters most to someone: this
+# catalog uses 52 varying global parameters, and the original 13 ignored the
+# user's entire HSL signature (yellows/greens shifted and desaturated, orange
+# luminance lifted, across ~400 of 560 photos).
+#
+# So: everything numeric and global in the history is modelled, minus these
+# categories, each excluded for a stated reason rather than by taste.
+
+# Compositional intent, never predicted (design 08 §1).
+_DENY_PREFIX_GEOMETRY = ("Crop", "Upright", "Perspective", "Straighten")
+# Spatial and per-photo; permanently out of scope (§1).
+_DENY_PREFIX_LOCAL = ("Local", "Correction", "Mask", "PaintBased",
+                      "RetouchArea", "CircularGradient", "GradientBased")
+# Absolute white balance describes the LIGHT, not the user's taste. Modelling
+# it needs an as-shot baseline the analyzer does not emit yet (§2.2) — a
+# recorded gap, not an oversight.
+_DENY_WHITE_BALANCE = frozenset({
+    "Temperature", "Tint", "CustomTemperature", "CustomTint",
+    "IncrementalTemperature", "IncrementalTint",
+})
+# Bookkeeping and identity: stamped or copied, never blended.
+_DENY_BOOKKEEPING = frozenset({
+    "Version", "ProcessVersion", "CompatibleVersion", "HDRMaxValue",
+    "HasSettings", "RawFileName", "SupportsAmount", "SupportsColor",
+    "SupportsMonochrome", "SupportsHighDynamicRange",
+    "SupportsNormalDynamicRange", "SupportsSceneReferred", "SupportsOutputReferred",
+})
+# A seed is not a style: averaging two random seeds means nothing.
+_DENY_SUFFIXES = ("Seed", "ID", "Digest", "Name", "Count", "Hash")
+
+
+def modelable(name: str) -> bool:
+    """Is this develop parameter one we may learn and write?
+
+    Everything numeric that is global and not explicitly excluded. Non-numeric
+    values (camera profile, ConvertToGrayscale, lens profile names) are handled
+    by the caller — a blend of strings is meaningless, so they are never
+    predicted.
+    """
+    if name.startswith(_DENY_PREFIX_GEOMETRY) or \
+            name.startswith(_DENY_PREFIX_LOCAL):
+        return False
+    if name in _DENY_WHITE_BALANCE or name in _DENY_BOOKKEEPING:
+        return False
+    return not name.endswith(_DENY_SUFFIXES)
+
+
+def params_of(samples: list["StyleSample"]) -> list[str]:
+    """The parameter set this history actually contains, in stable order."""
+    seen: set[str] = set()
+    for s in samples:
+        seen.update(s.deltas)
+    return sorted(seen)
+
 
 KNN_K = 8
 SOFTMAX_TAU = 0.05          # cosine-similarity temperature
@@ -63,7 +112,11 @@ CLIPPED_HI_LIMIT = 0.02
 @dataclass
 class StyleSample:
     photo_id: int
-    deltas: np.ndarray          # aligned to TONAL_PARAMS, NaN = param absent
+    # param name → delta. A DICT, not a fixed-length vector: the parameter set
+    # is whatever this user's history contains, so it cannot be known at import
+    # time. Absent key = the history has no value for it, which is different
+    # from a value of zero.
+    deltas: dict[str, float]
     embedding: np.ndarray       # L2-normalized scene embedding
     process_version: str | None
     raw_version: str | None = None   # crs:Version (Camera Raw), 07 §4
@@ -88,7 +141,11 @@ class Prediction:
 
 def load_history(conn: sqlite3.Connection,
                  library_id: int | None = None) -> list[StyleSample]:
-    """Edited photos (lr_history.develop) joined to their scene embeddings."""
+    """Edited photos (lr_history.develop) joined to their scene embeddings.
+
+    Every modelable numeric parameter the catalog recorded is kept — the set
+    is the user's, not ours (see `modelable`).
+    """
     scope = "AND p.library_id = ?" if library_id else ""
     args = (library_id,) if library_id else ()
     samples = []
@@ -98,10 +155,10 @@ def load_history(conn: sqlite3.Connection,
             f"JOIN embedding e ON e.photo_id = h.photo_id AND e.kind='scene' "
             f"WHERE h.develop IS NOT NULL {scope}", args):
         dev = json.loads(row["develop"])
-        deltas = np.array([float(dev[k]) if isinstance(dev.get(k), (int, float))
-                           and not isinstance(dev.get(k), bool) else np.nan
-                           for k in TONAL_PARAMS])
-        if np.isnan(deltas).all():
+        deltas = {k: float(v) for k, v in dev.items()
+                  if isinstance(v, (int, float))
+                  and not isinstance(v, bool) and modelable(k)}
+        if not deltas:
             continue
         vec = np.frombuffer(row["vec"], dtype=np.float32).astype(np.float64)
         n = np.linalg.norm(vec)
@@ -160,6 +217,20 @@ def select_process_version(samples: list[StyleSample],
 # --- Look families (design 08 §3): discovered from edits, not assumed -------
 
 
+def _matrix(samples: list[StyleSample], params: list[str] | None = None
+            ) -> tuple[np.ndarray, list[str]]:
+    """(n × p) matrix over the history's own parameter set; NaN where a photo
+    has no value for a parameter."""
+    params = params or params_of(samples)
+    X = np.full((len(samples), len(params)), np.nan)
+    for i, s in enumerate(samples):
+        for j, name in enumerate(params):
+            v = s.deltas.get(name)
+            if v is not None:
+                X[i, j] = v
+    return X, params
+
+
 def cluster_families(samples: list[StyleSample], distance_cut: float = 0.7,
                      min_family: int = 5) -> int:
     """Average-linkage agglomerative clustering on correlation distance of
@@ -167,7 +238,15 @@ def cluster_families(samples: list[StyleSample], distance_cut: float = 0.7,
     a scipy dependency. Tiny clusters fold into family 0 rather than
     becoming one-photo 'looks'. Returns the family count.
     """
-    X = np.stack([s.deltas for s in samples])
+    X, params = _matrix(samples)
+    # Correlation distance needs at least three parameters to express a
+    # difference: with two, every centred row is collinear and every pair sits
+    # at distance 0 or 2, so "families" would be an artifact. One family is the
+    # honest answer for a history that thin.
+    if len(params) < 3:
+        for s_ in samples:
+            s_.family = 0
+        return 1
     with _nan_ok():
         mu = np.nanmean(X, axis=0)
         sd = np.nanstd(X, axis=0)
@@ -228,8 +307,8 @@ def cluster_families(samples: list[StyleSample], distance_cut: float = 0.7,
 def family_traits(samples: list[StyleSample], family: int,
                   top: int = 3) -> str:
     """Human-readable distinguishing traits vs. the global mean (§3)."""
-    X = np.stack([s.deltas for s in samples])
-    fam = np.stack([s.deltas for s in samples if s.family == family])
+    X, params = _matrix(samples)
+    fam, _ = _matrix([s for s in samples if s.family == family], params)
     with _nan_ok():
         mu = np.nanmean(X, axis=0)
         sd = np.nanstd(X, axis=0)
@@ -242,15 +321,15 @@ def family_traits(samples: list[StyleSample], family: int,
         if np.isnan(diff[i]) or abs(diff[i]) < 0.2:
             continue
         sign = "+" if diff[i] > 0 else "−"
-        bits.append(f"{sign}{TONAL_PARAMS[i]}")
+        bits.append(f"{sign}{params[i]}")
     return " ".join(bits) or "(near the global mean)"
 
 
 def family_median(samples: list[StyleSample], family: int) -> dict[str, float]:
-    fam = np.stack([s.deltas for s in samples if s.family == family])
+    fam, params = _matrix([s for s in samples if s.family == family])
     with _nan_ok():
         med = np.nanmedian(fam, axis=0)
-    return {k: float(v) for k, v in zip(TONAL_PARAMS, med)
+    return {k: float(v) for k, v in zip(params, med)
             if not math.isnan(v)}
 
 
@@ -305,14 +384,15 @@ def predict(embedding: np.ndarray, history: list[StyleSample],
 
     w = np.exp((top_sims - top_sims[0]) / tau)
     w /= w.sum()
-    D = np.stack([fam[i].deltas for i in order])
+    F, names = _matrix(fam)                       # the family's own params
+    D = F[order, :]
     with _nan_ok():
-        lo = np.nanmin(np.stack([s.deltas for s in fam]), axis=0)
-        hi = np.nanmax(np.stack([s.deltas for s in fam]), axis=0)
+        lo = np.nanmin(F, axis=0)
+        hi = np.nanmax(F, axis=0)
 
     params: dict[str, float] = {}
     disagreements = []
-    for j, name in enumerate(TONAL_PARAMS):
+    for j, name in enumerate(names):
         col = D[:, j]
         mask = ~np.isnan(col)
         if not mask.any():

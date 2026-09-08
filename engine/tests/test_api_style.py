@@ -147,11 +147,21 @@ def test_per_parameter_optout_is_honoured_on_write(env):
 
 
 def test_unknown_param_is_rejected_not_silently_stored(env):
+    """Two distinct wrongs, and the error says which: policy never predicts
+    it, or the user's history has no such parameter (usually a typo, and
+    excluding it would silently do nothing)."""
     client, _, _ = env
     r = client.put("/api/style/preferences",
                    json={"excluded_params": ["NotAParam"]})
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "unknown_param"
+    assert r.json()["error"]["detail"]["absent"] == ["NotAParam"]
+
+    # Policy-forbidden names are refused with the other reason.
+    r2 = client.put("/api/style/preferences",
+                    json={"excluded_params": ["CropTop"]})
+    assert r2.status_code == 400
+    assert r2.json()["error"]["detail"]["forbidden"] == ["CropTop"]
     # Rejected wholesale — the prior value stands, nothing partially applied.
     assert client.get("/api/style/preferences").json()[
         "excluded_params"] == ["ColorGradeMidtoneHue"]

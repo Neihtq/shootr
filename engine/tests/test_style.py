@@ -6,13 +6,10 @@ numbers live in docs/benchmarks (leave-one-group-out eval).
 import numpy as np
 import pytest
 
-from shootr.style import (TONAL_PARAMS, Prediction, StyleSample,
-                          cluster_families, family_median, family_traits,
-                          predict)
+from shootr.style import (Prediction, StyleSample, cluster_families,
+                          family_median, family_traits, params_of, predict)
 
 DIM = 16
-EXPO = TONAL_PARAMS.index("Exposure2012")
-CONTRAST = TONAL_PARAMS.index("Contrast2012")
 
 
 def emb(seed, base=None):
@@ -23,11 +20,18 @@ def emb(seed, base=None):
 
 
 def sample(pid, expo, contrast, embedding):
-    d = np.full(len(TONAL_PARAMS), np.nan)
-    d[EXPO] = expo
-    d[CONTRAST] = contrast
-    return StyleSample(photo_id=pid, deltas=d, embedding=embedding,
-                       process_version="15.4")
+    # Three parameters minimum: correlation-distance clustering cannot express
+    # a difference with two (every centred row is collinear), so a two-param
+    # fixture would test the degenerate guard instead of family discovery.
+    return StyleSample(photo_id=pid,
+                       deltas={"Exposure2012": expo,
+                               "Contrast2012": contrast,
+                               # Anti-correlated on purpose: correlation
+                               # distance compares row SHAPE, so a parameter
+                               # that merely tracks another adds no shape and
+                               # the two looks stay indistinguishable.
+                               "Vibrance": -contrast / 2},
+                       embedding=embedding, process_version="15.4")
 
 
 @pytest.fixture
@@ -51,6 +55,9 @@ def test_families_are_discovered_not_assumed(two_looks):
     med = family_median(two_looks, two_looks[0].family)
     assert med["Exposure2012"] == pytest.approx(1.05, abs=0.1)
     assert isinstance(family_traits(two_looks, 0), str)
+    # The parameter set is the history's own, not a curated constant.
+    assert params_of(two_looks) == ["Contrast2012", "Exposure2012",
+                                    "Vibrance"]
 
 
 def test_predict_blends_neighbors_and_clamps(two_looks):
@@ -91,7 +98,7 @@ def test_disagreeing_neighbors_lower_confidence(two_looks):
     agreeing = predict(emb(99, a), two_looks, family=fam)
     # Same neighbors, but their exposure deltas now wildly disagree.
     for i, s in enumerate(m for m in two_looks if m.family == fam):
-        s.deltas[EXPO] = (-1) ** i * 3.0
+        s.deltas["Exposure2012"] = (-1) ** i * 3.0
     disagreeing = predict(emb(99, a), two_looks, family=fam)
     assert disagreeing.confidence < agreeing.confidence
 
