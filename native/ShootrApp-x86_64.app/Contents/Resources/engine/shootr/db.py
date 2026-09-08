@@ -1,0 +1,283 @@
+"""SQLite storage. Single writer: only the engine mutates the DB (design 01).
+
+Forward-only numbered migrations (design 01 §5). ``analysis.engine_version``
+is deliberately separate from schema version: an algorithm change invalidates
+measurements without a schema migration.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+# Migration 1 — full schema per docs/design/01-domain-model.md §3.
+_MIGRATION_1 = """
+CREATE TABLE library (
+  id           INTEGER PRIMARY KEY,
+  root_path    TEXT NOT NULL,
+  volume_uuid  TEXT,
+  created_at   TEXT NOT NULL
+);
+
+CREATE TABLE shoot (
+  id           INTEGER PRIMARY KEY,
+  library_id   INTEGER NOT NULL REFERENCES library(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  profile      TEXT NOT NULL CHECK (profile IN
+                 ('portrait','event','landscape','street')),
+  created_at   TEXT NOT NULL
+);
+
+CREATE TABLE photo (
+  id            INTEGER PRIMARY KEY,
+  library_id    INTEGER NOT NULL REFERENCES library(id) ON DELETE CASCADE,
+  shoot_id      INTEGER REFERENCES shoot(id) ON DELETE SET NULL,
+  content_id    TEXT NOT NULL,
+  rel_path      TEXT NOT NULL,
+  filename      TEXT NOT NULL,
+  raw_format    TEXT,
+  file_size     INTEGER NOT NULL,
+  mtime         REAL NOT NULL,
+  captured_at   TEXT,
+  subsec        INTEGER,
+  camera_model  TEXT,
+  lens_model    TEXT,
+  iso           INTEGER,
+  shutter       REAL,
+  aperture      REAL,
+  focal_length  REAL,
+  exposure_bias REAL,
+  orientation   INTEGER,
+  width         INTEGER,
+  height        INTEGER,
+  jpeg_sibling  TEXT,
+  sidecar_path  TEXT,
+  missing       INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (library_id, content_id)
+);
+CREATE INDEX photo_shoot_time ON photo(shoot_id, captured_at, subsec);
+CREATE INDEX photo_content    ON photo(content_id);
+
+CREATE TABLE analysis (
+  photo_id       INTEGER PRIMARY KEY REFERENCES photo(id) ON DELETE CASCADE,
+  engine_version TEXT NOT NULL,
+  decode_mode    TEXT NOT NULL,
+  frame          TEXT NOT NULL,
+  saliency       TEXT,
+  analyzed_at    TEXT NOT NULL
+);
+
+CREATE TABLE person (
+  id        INTEGER PRIMARY KEY,
+  shoot_id  INTEGER REFERENCES shoot(id) ON DELETE CASCADE,
+  label     TEXT
+);
+
+CREATE TABLE face (
+  id             INTEGER PRIMARY KEY,
+  photo_id       INTEGER NOT NULL REFERENCES photo(id) ON DELETE CASCADE,
+  idx            INTEGER NOT NULL,
+  bbox           TEXT NOT NULL,
+  roll           REAL, yaw REAL, pitch REAL,
+  capture_quality REAL,
+  eye_sharp_l    REAL, eye_sharp_r REAL,
+  eye_open_l     REAL, eye_open_r REAL,
+  eye_source     TEXT,
+  landmarks      TEXT,
+  faceprint      BLOB,
+  person_id      INTEGER REFERENCES person(id) ON DELETE SET NULL,
+  UNIQUE (photo_id, idx)
+);
+CREATE INDEX face_photo ON face(photo_id);
+
+CREATE TABLE embedding (
+  photo_id INTEGER NOT NULL REFERENCES photo(id) ON DELETE CASCADE,
+  kind     TEXT NOT NULL,
+  vec      BLOB NOT NULL,
+  dim      INTEGER NOT NULL,
+  PRIMARY KEY (photo_id, kind)
+);
+
+CREATE TABLE score (
+  photo_id     INTEGER NOT NULL REFERENCES photo(id) ON DELETE CASCADE,
+  profile      TEXT NOT NULL,
+  total        REAL NOT NULL,
+  components   TEXT NOT NULL,
+  flags        TEXT NOT NULL,
+  weights_hash TEXT NOT NULL,
+  PRIMARY KEY (photo_id, profile)
+);
+
+CREATE TABLE "group" (
+  id         INTEGER PRIMARY KEY,
+  shoot_id   INTEGER NOT NULL REFERENCES shoot(id) ON DELETE CASCADE,
+  level      TEXT NOT NULL CHECK (level IN ('scene','shot','pose','person')),
+  parent_id  INTEGER REFERENCES "group"(id) ON DELETE CASCADE,
+  is_bracket INTEGER NOT NULL DEFAULT 0,
+  label      TEXT
+);
+
+CREATE TABLE group_member (
+  group_id INTEGER NOT NULL REFERENCES "group"(id) ON DELETE CASCADE,
+  photo_id INTEGER NOT NULL REFERENCES photo(id) ON DELETE CASCADE,
+  PRIMARY KEY (group_id, photo_id)
+);
+
+CREATE TABLE selection (
+  id          INTEGER PRIMARY KEY,
+  shoot_id    INTEGER NOT NULL REFERENCES shoot(id) ON DELETE CASCADE,
+  created_at  TEXT NOT NULL,
+  params      TEXT NOT NULL,
+  exported_at TEXT
+);
+
+CREATE TABLE selection_entry (
+  selection_id INTEGER NOT NULL REFERENCES selection(id) ON DELETE CASCADE,
+  photo_id     INTEGER NOT NULL REFERENCES photo(id) ON DELETE CASCADE,
+  group_id     INTEGER REFERENCES "group"(id) ON DELETE SET NULL,
+  state        TEXT NOT NULL CHECK (state IN ('pick','alt','reject')),
+  rank         INTEGER,
+  reason       TEXT,
+  user_override INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (selection_id, photo_id)
+);
+
+CREATE TABLE lr_history (
+  photo_id    INTEGER PRIMARY KEY REFERENCES photo(id) ON DELETE CASCADE,
+  pick_flag   INTEGER,
+  rating      INTEGER,
+  color_label TEXT,
+  develop     TEXT
+);
+
+CREATE TABLE edit_prediction (
+  id          INTEGER PRIMARY KEY,
+  photo_id    INTEGER NOT NULL REFERENCES photo(id) ON DELETE CASCADE,
+  look_family TEXT,
+  params      TEXT NOT NULL,
+  model_kind  TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  applied_at  TEXT
+);
+
+CREATE TABLE job (
+  id          INTEGER PRIMARY KEY,
+  shoot_id    INTEGER REFERENCES shoot(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,
+  state       TEXT NOT NULL CHECK (state IN
+                ('pending','running','done','failed','cancelled')),
+  total       INTEGER,
+  completed   INTEGER NOT NULL DEFAULT 0,
+  error       TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE job_item (
+  job_id   INTEGER NOT NULL REFERENCES job(id) ON DELETE CASCADE,
+  photo_id INTEGER NOT NULL REFERENCES photo(id) ON DELETE CASCADE,
+  state    TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error    TEXT,
+  PRIMARY KEY (job_id, photo_id)
+);
+CREATE INDEX job_item_pending ON job_item(job_id, state);
+"""
+
+# Volume identity (design 02 §Discover): a library is (volume UUID,
+# path-relative-to-mount), so an external drive remounted at a different
+# path resolves to the SAME library row. UUID alone is not enough — two
+# folders on one drive are two libraries.
+_MIGRATION_2 = """
+ALTER TABLE library ADD COLUMN volume_rel_path TEXT;
+"""
+
+# Body pose (design 03 §4 `pose`): raw joints as measured, one JSON array per
+# photo. Kept on `analysis` because it IS a measurement — expensive,
+# profile-independent, immutable per engine_version (design 01). The derived
+# pose *vector* is not stored: it is cheap to recompute and belongs to
+# grouping's semantics (design 05 §4).
+_MIGRATION_3 = """
+ALTER TABLE analysis ADD COLUMN pose TEXT;
+"""
+
+# User preferences the ENGINE must honour, not UI chrome (design 08 §6's
+# per-parameter opt-out). It lives server-side deliberately: the opt-out
+# changes what gets written to the user's files, so a client-local toggle
+# would mean web and native writing different edits from the same click.
+_MIGRATION_4 = """
+CREATE TABLE preference (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+"""
+
+# The one measured default (design 08 §6 / §7a): the family median beats the
+# per-photo prediction on ColorGradeMidtoneHue — the only parameter of 12 where
+# it does (docs/benchmarks/2026-08-30-style-knn-eval.md). It belongs here, not
+# in a client PUT: a default that only exists in one client is not a default,
+# and a client writing preferences on load would be the client deciding.
+_MIGRATION_5 = """
+INSERT INTO preference (key, value, updated_at)
+VALUES ('style.excluded_params', '["ColorGradeMidtoneHue"]', datetime('now'))
+ON CONFLICT(key) DO NOTHING;
+"""
+
+# Style models the user creates and controls (design 08 §7b). A model is a
+# method + a scope of libraries + its measured metrics, so "is this new method
+# better for me" is answered on the user's own edits rather than assumed from
+# whatever shoot happened to be measured first.
+_MIGRATION_6 = """
+CREATE TABLE style_model (
+  id              INTEGER PRIMARY KEY,
+  name            TEXT NOT NULL,
+  method          TEXT NOT NULL,
+  library_ids     TEXT NOT NULL,   -- JSON array; [] = every library
+  params          TEXT NOT NULL,   -- JSON method knobs
+  metrics         TEXT,            -- JSON, from the §7 harness
+  fit             TEXT,            -- JSON coefficients (fitted methods only)
+  history_n       INTEGER,
+  process_version TEXT,
+  created_at      TEXT NOT NULL,
+  trained_at      TEXT,
+  is_active       INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+MIGRATIONS: list[str] = [_MIGRATION_1, _MIGRATION_2, _MIGRATION_3,
+                         _MIGRATION_4, _MIGRATION_5, _MIGRATION_6]
+
+
+def connect(db_path: str | Path) -> sqlite3.Connection:
+    """Open (creating if needed) the engine DB and apply pending migrations."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    _migrate(conn)
+    return conn
+
+
+def schema_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    return row[0] or 0
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version "
+        "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    current = schema_version(conn)
+    for number, sql in enumerate(MIGRATIONS, start=1):
+        if number <= current:
+            continue
+        with conn:  # one transaction per migration
+            conn.executescript(sql)
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) "
+                "VALUES (?, datetime('now'))",
+                (number,),
+            )
