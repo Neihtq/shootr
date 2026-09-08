@@ -230,3 +230,24 @@ def test_untrained_model_refuses_to_predict(env):
                     json={"photo_ids": [15], "model_id": mid})
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "model_not_trained"
+
+
+def test_untrained_model_cannot_be_made_active(env):
+    """The engine must not offer a state where the active model cannot
+    predict — refusing here is cheaper than every client guarding against it
+    (design 10 §1: the engine owns the rules)."""
+    client, db_path = env
+    good = client.post("/api/style/models", json={
+        "name": "good", "method": "knn", "library_ids": [1]}).json()
+    c = connect(db_path)
+    empty = style_models.create(c, "never learned", "knn", [1])
+    c.close()
+
+    r = client.post(f"/api/style/models/{empty}/activate")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "model_not_trained"
+    # The previously active model is still active — a refused call changes
+    # nothing.
+    active = [m for m in client.get("/api/style/models").json()
+              if m["is_active"]]
+    assert [m["id"] for m in active] == [good["id"]]

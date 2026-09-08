@@ -952,8 +952,18 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
     def activate_style_model(model_id: int):
         c = conn()
         try:
-            if style_models.get(c, model_id) is None:
+            m = style_models.get(c, model_id)
+            if m is None:
                 raise error(404, "file_missing", f"no model {model_id}")
+            # Refuse rather than let the app reach a state where the active
+            # model cannot predict. The clients were having to guard against
+            # this trap; the engine should not set it (design 10 §1 — the
+            # engine owns the rules).
+            if not m.trained:
+                raise error(409, "model_not_trained",
+                            f"model {m.id} ({m.name}) has not been learned "
+                            "yet, so it cannot be made active",
+                            retryable=True)
             style_models.set_active(c, model_id)
             return _model_payload(style_models.get(c, model_id))
         finally:
