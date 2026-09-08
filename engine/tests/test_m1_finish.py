@@ -1,4 +1,5 @@
 """Tests for the M1 finish items: profile hints, landscape focus-plane,
+import sys
 rolling rate/ETA, hardlink Selects folder."""
 
 import time
@@ -169,3 +170,36 @@ class TestHardlinkSelects:
         ghost = tmp_path / "lib" / "gone.CR3"
         n = export_hardlinks([(ghost, "pick")], tmp_path / "selects")
         assert n == 0
+
+
+def test_engine_declares_every_runtime_dependency():
+    """The app bundler installs this package and trusts pyproject for deps, so
+    an undeclared import ships a broken .app instead of failing a test. numpy
+    was missing exactly that way when style learning landed."""
+    import ast
+    import pathlib
+    import sys
+    import tomllib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    declared = set()
+    with (root / "pyproject.toml").open("rb") as fh:
+        for spec in tomllib.load(fh)["project"]["dependencies"]:
+            declared.add(spec.split("[")[0].split(">")[0].split("=")[0].strip())
+
+    stdlib = set(sys.stdlib_module_names) if hasattr(sys, "stdlib_module_names") \
+        else set()
+    imported = set()
+    for py in (root / "shootr").glob("*.py"):
+        for node in ast.walk(ast.parse(py.read_text())):
+            if isinstance(node, ast.Import):
+                imported.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 \
+                    and node.module:
+                imported.add(node.module.split(".")[0])
+
+    third_party = {m for m in imported
+                   if m not in stdlib and m != "shootr"
+                   and m not in {"shootr_analyzer", "mediapipe"}}
+    missing = sorted(third_party - declared)
+    assert not missing, f"imported but not declared in pyproject: {missing}"

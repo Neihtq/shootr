@@ -51,10 +51,13 @@ if [[ "$1" == "--bundled" ]]; then
 
   echo "→ engine + dependencies"
   mkdir -p "$RES/engine"
-  cp -R "$ROOT/engine/shootr" "$RES/engine/"
-  find "$RES/engine" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+  # Install the ENGINE PACKAGE, so its dependencies come from pyproject.toml
+  # rather than a list duplicated here. The hardcoded list silently omitted
+  # numpy when style learning landed, which would have shipped an .app whose
+  # engine could not import.
   "$RES/python/bin/python3" -m pip install --quiet --no-warn-script-location \
-    --target "$RES/engine" fastapi uvicorn blake3
+    --target "$RES/engine" "$ROOT/engine"
+  find "$RES/engine" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 
   echo "→ Swift helper"
   (cd "$ROOT/helper" && swift build -c release >/dev/null)

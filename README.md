@@ -39,6 +39,36 @@ Building `--bundled` needs Node once (for the web UI build); plain
 `native/make-app.sh` skips all of that and expects the engine run from
 source, as below.
 
+### Sharing the app with someone else
+
+The bundle is self-contained, so a `.app` copied to another Mac runs with no
+Python, Node or terminal on it. Two things it needs, and one thing macOS will
+do:
+
+- **Apple Silicon**, and **macOS 15 or newer** (`LSMinimumSystemVersion` 15.0;
+  the binaries are arm64-only, so Intel Macs are out).
+- `make-app.sh` signs **ad-hoc** — no Apple Developer certificate. That is
+  enough to run locally but not enough for Gatekeeper on a machine that
+  *downloaded* it. Whichever way it arrives, the fix is one of:
+
+  ```bash
+  xattr -dr com.apple.quarantine /path/to/ShootrApp.app   # then double-click
+  ```
+
+  …or right-click → **Open**, then *Open Anyway* in System Settings →
+  Privacy & Security.
+
+- **Copying by USB stick, `scp` or `rsync` avoids this entirely** — the
+  quarantine flag is set by the app that downloads a file, so AirDrop, Mail
+  and browsers trigger it while a plain file copy does not.
+
+To ship it with no warning at all you need an Apple Developer account
+($99/yr): sign with a Developer ID certificate and the hardened runtime,
+notarize with `notarytool`, then staple. Note the embedded Python needs
+`com.apple.security.cs.disable-library-validation` under the hardened
+runtime, and every nested binary has to be signed individually — `--deep` is
+deprecated and will not do it correctly. Not set up here.
+
 ## Setup (development, from source)
 
 ```bash

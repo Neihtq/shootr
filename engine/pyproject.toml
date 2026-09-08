@@ -3,7 +3,11 @@ name = "shootr-engine"
 version = "0.1.0"
 description = "Shootr photo culling engine — scoring, grouping, culling, storage"
 requires-python = ">=3.14"
-dependencies = ["blake3"]
+# Everything `import shootr.api` needs at runtime. Kept complete on purpose:
+# the app bundler installs this package, so an undeclared dependency ships a
+# broken .app rather than failing here (numpy was missing exactly that way
+# when style learning landed).
+dependencies = ["blake3", "numpy", "fastapi", "uvicorn", "pydantic"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
