@@ -341,7 +341,14 @@ First pass on the real wedding (`docs/benchmarks/2026-08-30-style-knn-eval.md`):
   to `~/Pictures/shootr-style-test/` as hardlink + sidecar, so the library is untouched.
   Open question that only a human can answer: is this a usable starting point?
 - JPEG+RAW pair validation (trends/direction, not pixel equality) — needs exported pairs
-- Gradient-boosted trees only if k-NN measurably underperforms — not currently indicated
+- ⚠ **Trained model: measured, and it wins on ONE parameter already**
+  (`docs/benchmarks/2026-09-08-knn-vs-trained.md`). Ridge over the scene embedding
+  beats k-NN on `Exposure2012` at every history size (0.303 vs 0.344 EV at n=560),
+  while k-NN keeps a clear lead on Highlights/Shadows and is still improving. So the
+  crossover is per-parameter, not a single n. Recommended next step is a per-parameter
+  hybrid chosen by the harness — pending a decision, because it costs inspectability
+  on the switched parameters and needs §6's clamp/abstention wired around any trained
+  predictor before it may write
 
 ## M4 — Native client (SwiftUI) — pulled forward; core built 2026-08
 

@@ -110,6 +110,17 @@ handles nonlinearity, still somewhat interpretable via feature importance. Torch
 available but a deep model is not justified at this data scale — and it would forfeit the
 inspectability that makes the feature trustworthy.
 
+**Measured 2026-09-08 and the trigger is already partly met**
+(`docs/benchmarks/2026-09-08-knn-vs-trained.md`): plain ridge over the scene embedding
+beats k-NN on `Exposure2012` at *every* history size (0.303 vs 0.344 EV at n=560), while
+k-NN leads clearly on Highlights/Shadows and is still improving with data. The crossover
+is therefore **per parameter, not a single sample count** — exposure looks like a global
+function of the scene, tonal moves look local and idiosyncratic. The indicated design is
+a per-parameter hybrid selected by the §7 harness on each user's own history, with two
+non-negotiables: any trained parameter keeps §6's clamp and abstention, and the UI must
+say when a value came from a model rather than from named neighbour photos, since "edited
+like these five" is the explanation that earns trust.
+
 ---
 
 ## 5. Data sources
