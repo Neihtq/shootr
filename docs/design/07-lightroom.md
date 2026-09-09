@@ -124,14 +124,21 @@ duplication). Works regardless of sidecar/DNG issues.
 ### 3.2b Delivering the selects as files (no Lightroom at all)
 
 Requested 2026-09-09: someone who wants only the culling has no use for sidecars they
-must import. They want the keepers as *files*, in a folder they choose. Three modes,
-because they trade differently and the right default is not the one they asked for:
+must import. They want the keepers as *files*, in a folder they choose.
 
-| mode | disk cost | originals | good for |
+**Two separate actions, not one dialog with a mode dropdown** (user's correction, same
+day). Moving someone's originals is a different kind of act from producing a second view
+of them, and burying it as the third option in a picker makes the most consequential
+choice the easiest to click by accident:
+
+| action | mode(s) | disk cost | originals |
 |---|---|---|---|
-| **hardlink** (default) | none | untouched, still in place | "show me the keepers" on the same drive |
-| **copy** | full size again | untouched | handing a folder to someone, or another drive |
-| **move** | none | **relocated** | freeing the shoot folder down to keepers |
+| **Deliver files…** | hardlink (default), copy | none / full size | untouched, still in place |
+| **Move keepers…** | move | none | **relocated to the chosen folder** |
+
+`Deliver files…` never offers move; `Move keepers…` never does anything else. One code
+path in the engine (`deliver.plan`/`execute` take a mode), two deliberately separate
+doors in the UI, each with its own confirmation and its own keyboard shortcut.
 
 Rules this must obey, and why:
 
