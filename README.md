@@ -166,6 +166,28 @@ regroup and re-cull. Full rules: `docs/design/06-culling.md`.
 rejects write nothing). In Lightroom: select the photos, then
 *Metadata → Read Metadata from Files*.
 
+### Using it without Lightroom
+
+**Deliver files…** puts the keepers in a folder you choose, so the cull is
+useful on its own. Three modes:
+
+| mode | disk cost | your originals |
+|---|---|---|
+| **hardlink** (default) | none | stay where they are — same drive only |
+| **copy** | full size again | stay where they are |
+| **move** | none | **relocated to the new folder** |
+
+It always dry-runs first and shows exactly what it would do — how many files,
+which names would clash, whether there is room — and writes nothing until you
+confirm. Rejects are never included, nothing is overwritten, and nothing is
+deleted. Sidecars and JPEG siblings travel with the RAW.
+
+A move keeps the app honest about where photos went: inside your library folder
+it updates the path and keeps the analysis, outside it marks them missing
+rather than pointing at files that are not there. Across drives it copies and
+verifies the copy by content hash before removing the original, so a failure
+leaves the original untouched.
+
 ### Learning your editing style (optional)
 
 Shootr can predict develop settings for new photos from edits you have
