@@ -265,3 +265,58 @@ class TestSSE:
         assert len(events) == 1
         assert events[0]["kind"] == "analyze"
         assert events[0]["total"] == 3
+
+
+class TestDeliverSelects:
+    """07 §3.2b over the API: dry run by default, rejects never included,
+    and a move says plainly that it relocates the user's originals."""
+
+    def test_dry_run_writes_nothing(self, env):
+        client, db_path, lib = env
+        seed_group(db_path, [1, 2, 3])
+        c = connect(db_path)
+        c.execute("INSERT INTO selection (id, shoot_id, created_at, params) "
+                  "VALUES (9, 1, 'now', '{}')")
+        for pid, state in ((1, "pick"), (2, "alt"), (3, "reject")):
+            c.execute("INSERT INTO selection_entry (selection_id, photo_id, "
+                      "state) VALUES (9, ?, ?)", (pid, state))
+        c.commit()
+        c.close()
+        out = lib.parent / "delivered"
+
+        r = client.post("/api/selections/9/deliver",
+                        json={"dest_dir": str(out), "mode": "copy"})
+        body = r.json()
+        assert body["dry_run"] is True and body["count"] == 1
+        assert body["moves_originals"] is False
+        assert not out.exists(), "a dry run must not create the folder"
+
+        r2 = client.post("/api/selections/9/deliver",
+                         json={"dest_dir": str(out), "mode": "copy",
+                               "confirm": True})
+        assert r2.json()["delivered"] == 1
+        assert [f.name for f in out.iterdir()] == ["IMG_1.CR3"]
+        # The reject and the alt stayed put; nothing was removed.
+        assert (lib / "IMG_3.CR3").is_file() and (lib / "IMG_1.CR3").is_file()
+
+    def test_move_reports_that_it_relocates_originals(self, env):
+        client, db_path, lib = env
+        c = connect(db_path)
+        c.execute("INSERT INTO selection (id, shoot_id, created_at, params) "
+                  "VALUES (9, 1, 'now', '{}')")
+        c.execute("INSERT INTO selection_entry (selection_id, photo_id, state) "
+                  "VALUES (9, 1, 'pick')")
+        c.commit()
+        c.close()
+        out = lib.parent / "moved"
+        body = client.post("/api/selections/9/deliver",
+                           json={"dest_dir": str(out), "mode": "move"}).json()
+        assert body["moves_originals"] is True and body["dry_run"] is True
+        assert (lib / "IMG_1.CR3").is_file()
+
+        done = client.post("/api/selections/9/deliver",
+                           json={"dest_dir": str(out), "mode": "move",
+                                 "confirm": True}).json()
+        assert done["delivered"] == 1 and done["marked_missing"] == 1
+        assert not (lib / "IMG_1.CR3").exists()
+        assert "nothing was deleted" in done["note"]

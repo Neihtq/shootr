@@ -22,8 +22,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import (db, helper, jobs, overrides, pipeline, style,
-               style_models, xmp)
+from . import (db, deliver, helper, jobs, overrides, pipeline,
+               style, style_models, xmp)
 from .ingest import (backfill_metadata, create_library as
                      ingest_create_library, propose_shoots, resolve_library,
                      scan)
@@ -93,6 +93,13 @@ class StylePrefsIn(BaseModel):
     # purpose: it changes what lands in the user's files, so a client-local
     # toggle would let web and native write different edits.
     excluded_params: list[str]
+
+
+class DeliverIn(BaseModel):
+    dest_dir: str
+    mode: str = "hardlink"          # hardlink | copy | move (07 §3.2b)
+    include_alt: bool = False       # rejects are never offered
+    confirm: bool = False
 
 
 class SplitIn(BaseModel):
@@ -877,6 +884,75 @@ def create_app(db_path: str | Path, backup_dir: str | Path,
                 "profile": r.profile,
                 "note": r.note,
             }
+        finally:
+            c.close()
+
+    # -- deliver selects as files (design 07 §3.2b) ----------------------------
+
+    def _deliver_entries(c, selection_id):
+        rows = c.execute(
+            "SELECT se.photo_id, se.state, p.rel_path, l.root_path "
+            "FROM selection_entry se "
+            "JOIN photo p ON p.id = se.photo_id "
+            "JOIN library l ON l.id = p.library_id "
+            "WHERE se.selection_id = ? AND se.state IN ('pick','alt')",
+            (selection_id,)).fetchall()
+        root = Path(rows[0]["root_path"]) if rows else None
+        return [(r["photo_id"], Path(r["root_path"]) / r["rel_path"],
+                 r["state"]) for r in rows], root
+
+    @app.post("/api/selections/{selection_id}/deliver")
+    def deliver_selects(selection_id: int, body: DeliverIn):
+        """Put the keepers in a folder — for the workflow with no Lightroom.
+
+        Without `confirm` this is a DRY RUN: it reports what would happen and
+        writes nothing. Rejects are never included, whatever is asked.
+        """
+        c = conn()
+        try:
+            entries, root = _deliver_entries(c, selection_id)
+            if not entries:
+                raise error(404, "no_selection",
+                            f"selection {selection_id} has no picks")
+            states = ("pick", "alt") if body.include_alt else ("pick",)
+            try:
+                p = deliver.plan(entries, Path(body.dest_dir), body.mode,
+                                 states=states)
+            except deliver.DeliveryImpossible as e:
+                raise error(409, "delivery_impossible", str(e),
+                            detail={"modes": list(deliver.MODES)})
+            preview = {
+                "mode": p.mode, "dest_dir": str(p.dest_dir),
+                "count": len(p.items),
+                "companions": sum(len(i.companions) for i in p.items),
+                "renamed": [i.dest.name for i in p.items if i.renamed],
+                "already_present": p.already_present,
+                "missing_source": p.missing_source,
+                "cross_volume": p.cross_volume,
+                "bytes_needed": p.bytes_needed,
+                "free_bytes": p.free_bytes,
+                "enough_space": p.enough_space,
+                # A move relocates the user's originals; the client must be
+                # able to say so before it happens.
+                "moves_originals": p.mode == "move",
+            }
+            if not body.confirm:
+                return {"dry_run": True, **preview}
+            try:
+                r = deliver.execute(c, p, library_root=root)
+            except deliver.DeliveryImpossible as e:
+                raise error(409, "delivery_impossible", str(e))
+            return {"dry_run": False, **preview,
+                    "delivered": len(r.delivered),
+                    "failed": [{"file": f, "error": m} for f, m in r.failed],
+                    "relinked": r.relinked,
+                    "marked_missing": r.marked_missing,
+                    "note": ("originals were moved; the library now points at "
+                             "their new location" if r.relinked else
+                             "originals were moved out of the library and are "
+                             "marked missing — nothing was deleted"
+                             if r.marked_missing else
+                             "originals were left exactly where they were")}
         finally:
             c.close()
 
