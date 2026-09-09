@@ -41,9 +41,14 @@ const INSPECT: Item[] = [
   { key: "B", label: "eye crops", detail: "full-res eyes of the primary face — blink check" },
   { key: "E", label: "evidence panel", detail: "per-metric scores behind the verdict" },
   { key: "F", label: "deliver files…",
-    detail: "put the keepers in a folder you choose — hardlink, copy or move. "
-      + "Always plans first; writes only on confirm, and never delivers a "
-      + "rejected frame" },
+    detail: "put the keepers in a folder you choose — hardlink or copy, your "
+      + "originals left exactly where they are. Always plans first; writes "
+      + "only on confirm, and never delivers a rejected frame" },
+  { key: "M", label: "move keepers…",
+    detail: "move the keepers OUT of their folder into one you choose — the "
+      + "originals are relocated, and Shootr updates where it thinks they "
+      + "live. Separate from F on purpose. Always plans first; nothing moves "
+      + "until you confirm, and nothing is deleted" },
   { key: "?", label: "this list" },
 ];
 

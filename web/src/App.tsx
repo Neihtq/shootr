@@ -7,6 +7,7 @@ import { DeliverDialog } from "./components/DeliverDialog";
 import { ExportDialog } from "./components/ExportDialog";
 import { GroupReview } from "./components/GroupReview";
 import { JobHeader } from "./components/JobHeader";
+import { MoveKeepersDialog } from "./components/MoveKeepersDialog";
 import { ShootList } from "./components/ShootList";
 import { StyleView } from "./components/StyleView";
 
@@ -32,6 +33,9 @@ function Shell() {
   });
   const [exportOpen, setExportOpen] = useState(false);
   const [deliverOpen, setDeliverOpen] = useState(false);
+  /** Separate from `deliverOpen`, like the two actions themselves (design 07
+   * §3.2b): moving the originals is its own door, not a mode of delivery. */
+  const [moveOpen, setMoveOpen] = useState(false);
 
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-200">
@@ -75,7 +79,9 @@ function Shell() {
                 selectionId={view.selectionId}
                 onOpenExport={() => setExportOpen(true)}
                 onOpenDeliver={() => setDeliverOpen(true)}
+                onOpenMove={() => setMoveOpen(true)}
                 onOpenStyle={() => setView((v) => ({ ...v, screen: "style" }))}
+                dialogOpen={exportOpen || deliverOpen || moveOpen}
               />
             ) : (
               <StyleView shootId={view.shootId} />
@@ -93,6 +99,12 @@ function Shell() {
         <DeliverDialog
           selectionId={view.selectionId}
           onClose={() => setDeliverOpen(false)}
+        />
+      )}
+      {moveOpen && view.selectionId !== null && (
+        <MoveKeepersDialog
+          selectionId={view.selectionId}
+          onClose={() => setMoveOpen(false)}
         />
       )}
     </div>

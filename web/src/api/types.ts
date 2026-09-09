@@ -187,6 +187,12 @@ export interface ExportPreview {
 export const DELIVERY_MODES = ["hardlink", "copy", "move"] as const;
 export type DeliveryMode = (typeof DELIVERY_MODES)[number];
 
+/** The modes the "Deliver files…" action offers — the two that leave the
+ * user's originals exactly where they are. `move` is deliberately absent:
+ * §3.2b splits it out as its own action with its own dialog, because a move
+ * hidden as the third option in a picker is the easiest one to mis-click. */
+export const NON_DESTRUCTIVE_DELIVERY_MODES = ["hardlink", "copy"] as const;
+
 /** The plan the engine computed. Present on the dry run AND echoed on the
  * confirmed run, so the result is read against the plan it came from. */
 interface DeliveryPlan {

@@ -35,15 +35,26 @@ export function GroupReview({
   selectionId,
   onOpenExport,
   onOpenDeliver,
+  onOpenMove,
   onOpenStyle,
+  dialogOpen = false,
 }: {
   shootId: number;
   selectionId: number | null;
   onOpenExport: () => void;
   /** Deliver the keepers as files into a folder (design 07 §3.2b) — the
-   * no-Lightroom path, so it sits beside Export, not inside it. */
+   * no-Lightroom path, so it sits beside Export, not inside it. Hardlink or
+   * copy: the originals stay where they are. */
   onOpenDeliver: () => void;
+  /** Move the keepers out of their folder — §3.2b's second, separate action.
+   * Its own button, never a mode inside Deliver: the one action that
+   * relocates the user's originals must not be the easiest to mis-click. */
+  onOpenMove: () => void;
   onOpenStyle: () => void;
+  /** True while App has a dialog over this screen. The review bindings go
+   * inert: with two delivery actions on separate keys, a stray F or M behind
+   * an open dialog would otherwise stack a second one over the first. */
+  dialogOpen?: boolean;
 }) {
   const { data: groups } = useGroups(shootId);
   const { data: selection } = useSelection(selectionId);
@@ -132,13 +143,15 @@ export function GroupReview({
     onToggleEyes: () => setShowEyes((v) => !v),
     onShowShortcuts: () => setShowShortcuts(true),
     onOpenDeliver: () => onOpenDeliver?.(),
+    onOpenMove: () => onOpenMove?.(),
     onTogglePick: () => {
       const current = photoId !== null
         ? entryByPhoto.get(photoId)?.state : undefined;
       setState(current === "pick" ? "reject" : "pick");
     },
-    // CompareView and the shortcut dialog own the keyboard while open.
-    enabled: !comparing && !showShortcuts,
+    // CompareView, the shortcut dialog and any App-level dialog own the
+    // keyboard while open.
+    enabled: !comparing && !showShortcuts && !dialogOpen,
   });
 
   // Esc closes the dialog — it's modal, so the review bindings are inert.
@@ -228,10 +241,19 @@ export function GroupReview({
               </button>
               <button
                 onClick={onOpenDeliver}
-                title="Put the keepers in a folder as files — no Lightroom needed"
+                title="Put the keepers in a folder as files — hardlink or copy, originals stay put (F)"
                 className="rounded border border-neutral-700 px-2 py-0.5 hover:bg-neutral-800"
               >
                 Deliver files…
+              </button>
+              {/* Its own button, deliberately not a mode inside Deliver, and
+                  marked as the one that relocates the originals (§3.2b). */}
+              <button
+                onClick={onOpenMove}
+                title="Move the keepers out of their folder into one you choose — plans first, nothing is deleted (M)"
+                className="rounded border border-red-900 px-2 py-0.5 text-red-300 hover:bg-red-950"
+              >
+                Move keepers…
               </button>
             </div>
 

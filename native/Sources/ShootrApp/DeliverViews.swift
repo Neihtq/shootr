@@ -1,22 +1,39 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Deliver the selects as files (design 07 §3.2b, 12 §4a)
+// MARK: - Handing the cull over as files (design 07 §3.2b, 12 §4a)
 //
 // For the workflow with no Lightroom in it at all: cull, then hand over a
-// folder of keepers. The dialog wraps the engine's safety protocol, the same
-// way the XMP export dialog does — plan first, every count and caveat shown,
-// and no default-yes on the one action that relocates the user's files.
+// folder of keepers. §3.2b makes this TWO separate actions, deliberately not
+// one dialog with a mode picker:
 //
-// Every number here is the engine's: the counts, the collisions, the space
-// verdict, whether the mode is even possible, and whether the originals move
-// (rule 6). The client picks a folder, renders the plan, and asks.
+//   Deliver files…  → hardlink (default) or copy. The originals stay exactly
+//                     where they are. Nothing here can move a file.
+//   Move keepers…   → move, and only move. The originals are relocated.
 //
-// The copy is deliberately the SAME STRINGS as the web client's deliver
-// dialog. Doc 12 §4a: the two clients must not describe the same action in
-// different words. Where a sentence reads oddly for native, the fix is to
+// Moving someone's originals is a different kind of act from producing a
+// second view of them, so it gets its own door, its own shortcut (M vs F) and
+// its own confirmation. `move` is not reachable from `DeliverSheet` — it is not
+// in `DeliverCopy.modes`, and the deliver flow never passes any mode it did
+// not get from that list.
+//
+// One engine code path serves both (`POST …/deliver` takes a mode), and the
+// shared UI here is the part that is genuinely the same: the plan rendering,
+// the folder picker, the result rendering, the byte formatting, and the dry
+// run / confirm plumbing. What is NOT shared is any control that could turn
+// one door into the other.
+//
+// Every number is the engine's: the counts, the collisions, the space verdict,
+// whether the mode is even possible, and whether the originals move (rule 6).
+// The client picks a folder, renders the plan, and asks.
+//
+// The copy is deliberately the SAME STRINGS as the web client's deliver and
+// move dialogs. Doc 12 §4a: the two clients must not describe the same action
+// in different words. Where a sentence reads oddly for native, the fix is to
 // change it in both, not to reword one.
 
+/// Strings shared by both actions, plus the ones belonging to `Deliver files…`.
+/// Anything move-specific lives in `MoveCopy`.
 enum DeliverCopy {
     static let title = "Deliver selects as files"
 
@@ -39,13 +56,12 @@ enum DeliverCopy {
         switch mode {
         case "hardlink": return "Hardlink"
         case "copy": return "Copy"
-        case "move": return "Move"
         default: return mode
         }
     }
 
     /// One plain line per mode, in the order that decides it: what it costs on
-    /// disk, what becomes of the originals, and any restriction. All three are
+    /// disk, what becomes of the originals, and any restriction. Both are
     /// shown at once — the trade-off is the choice.
     static func modeExplainer(_ mode: String) -> String {
         switch mode {
@@ -55,17 +71,16 @@ enum DeliverCopy {
         case "copy":
             return "Copy — writes every file again at full size, and your "
                 + "originals stay exactly where they are."
-        case "move":
-            return "Move — relocates your originals into that folder. "
-                + "Nothing is deleted."
         default:
             return mode
         }
     }
 
-    static let modes = ["hardlink", "copy", "move"]
+    /// The only modes this dialog can ever ask the engine for. `move` is
+    /// absent by design (§3.2b) — it has its own action, `MoveKeepersSheet`.
+    static let modes = ["hardlink", "copy"]
 
-    // -- the plan ------------------------------------------------------------
+    // -- the plan (shared) ---------------------------------------------------
 
     static let planning = "Checking what would happen…"
     static let dryRunBanner =
@@ -105,8 +120,9 @@ enum DeliverCopy {
         + (n == 1 ? "it" : "them") + " may be offline."
     }
 
-    /// Only stated for `move`: across drives the engine copies, verifies, and
-    /// unlinks only then, and that is worth knowing before starting.
+    /// Only reachable from the move action: across drives the engine copies,
+    /// verifies, and unlinks only then, and that is worth knowing before
+    /// starting.
     static let crossVolumeMove =
         "That folder is on a different drive, so each file is copied, "
         + "verified, and only then removed from its old location."
@@ -122,22 +138,10 @@ enum DeliverCopy {
         + "through. Choose another folder, or use hardlink if the folder is on "
         + "the same drive as the photos."
 
-    // -- the move confirmation (the only destructive-feeling action) ---------
-
-    static let moveWarningHeading = "This moves your originals"
-    static let moveWarning =
-        "The files leave their current folder and afterwards exist only in "
-        + "the destination. Nothing is deleted: each file is either moved "
-        + "intact or left exactly where it was, and Shootr updates its own "
-        + "record of where every photo lives."
-
     static func confirmButton(_ mode: String, count: Int) -> String {
         switch mode {
         case "hardlink": return "Hardlink " + StyleCopy.plural(count, "photo")
         case "copy": return "Copy " + StyleCopy.plural(count, "photo")
-        case "move":
-            return "Move " + StyleCopy.plural(count, "photo")
-                + " out of their folder"
         default: return "Deliver " + StyleCopy.plural(count, "photo")
         }
     }
@@ -185,61 +189,84 @@ enum DeliverCopy {
     }
 }
 
-struct DeliverSheet: View {
-    let selectionId: Int
-    let api = APIClient()
-    @Environment(\.dismiss) private var dismiss
+/// `Move keepers…` — the one action that relocates the user's originals, and
+/// the only place `mode: "move"` is ever sent.
+///
+/// The warning heading and body are the strings the web client's move dialog
+/// uses, character for character. They are the sentence a photographer decides
+/// on; if it is worth rewording, it is reworded in both clients at once.
+enum MoveCopy {
+    static let title = "Move keepers out of their folder"
 
-    /// Hardlink is the engine's default too (§3.2b) — the cheapest mode that
-    /// leaves the originals alone.
-    @State private var mode = "hardlink"
-    @State private var includeAlt = false
-    @State private var destDir: URL?
-    @State private var plan: APIClient.DeliverReport?
-    @State private var result: APIClient.DeliverReport?
-    @State private var errorText: String?
-    /// Set when the engine refused a mode and names copy as one it has —
-    /// the cross-volume hardlink case, one click from being fixed.
-    @State private var offerCopy = false
-    @State private var busy = false
-    /// Stale-response guard for overlapping dry runs.
-    @State private var token = 0
+    static let intro =
+        "Move — relocates your originals into that folder. Nothing is "
+        + "deleted. Rejected frames are never moved."
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(DeliverCopy.title)
-                .font(Theme.heading)
-                .foregroundStyle(Theme.ink)
+    static let panelMessage = "Choose the folder to move the keepers into"
 
-            if let result {
-                resultView(result)
-            } else {
-                setupView
-                planSection
-            }
-        }
-        .padding(18)
-        .frame(width: 520)
-        .background(Theme.surface)
-        .onChange(of: mode) { check() }
-        .onChange(of: includeAlt) { check() }
+    // -- the warning (verbatim shared with the web client) -------------------
+
+    static let warningHeading = "This moves your originals"
+    static let warning =
+        "The files leave their current folder and afterwards exist only in "
+        + "the destination. Nothing is deleted: each file is either moved "
+        + "intact or left exactly where it was, and Shootr updates its own "
+        + "record of where every photo lives."
+
+    // -- run / result --------------------------------------------------------
+    //
+    // The plan lines, the delivered-count line and the failure heading are the
+    // shared ones (`DeliverCopy`): a plan reads the same whichever action
+    // produced it, exactly as `PLAN_COPY` is shared on the web side.
+
+    static func confirmButton(count: Int) -> String {
+        "Move " + StyleCopy.plural(count, "photo") + " out of their folder"
     }
 
-    // MARK: setup — folder, mode, scope
+    static let running = "Moving…"
 
-    @ViewBuilder
-    private var setupView: some View {
-        Text(DeliverCopy.intro)
-            .font(Theme.caption)
-            .foregroundStyle(Theme.inkSecondary)
-            .fixedSize(horizontal: false, vertical: true)
+    /// The library's own record afterwards — the part a move changes that the
+    /// destination folder cannot show. Shown alongside the engine's `note`,
+    /// never instead of it.
+    static func relinkedLine(_ n: Int) -> String {
+        StyleCopy.plural(n, "photo")
+        + " relinked inside your library — Shootr now points at the new "
+        + "location, and the scores and analysis are unchanged."
+    }
 
-        // Native's advantage over the web client, which can only offer a text
-        // field: a real folder picker, so there is no path to mistype.
+    static func markedMissingLine(_ n: Int) -> String {
+        StyleCopy.plural(n, "photo")
+        + " now outside your library and marked missing — nothing was deleted "
+        + "and no analysis was discarded; Shootr simply no longer looks there."
+    }
+}
+
+// MARK: - Shared pieces
+
+/// The folder picker. Native's advantage over the web client, which can only
+/// offer a text field: a real panel, so there is no path to mistype.
+@MainActor
+private func pickFolder(message: String) -> URL? {
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.canCreateDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.message = message
+    panel.prompt = DeliverCopy.panelPrompt
+    return panel.runModal() == .OK ? panel.url : nil
+}
+
+private struct DestinationRow: View {
+    let destDir: URL?
+    let panelMessage: String
+    let onPick: (URL) -> Void
+
+    var body: some View {
         HStack(spacing: 8) {
             Button(destDir == nil ? DeliverCopy.chooseFolder
                    : DeliverCopy.changeFolder) {
-                pickDestination()
+                if let url = pickFolder(message: panelMessage) { onPick(url) }
             }
             .font(Theme.caption)
             Text(destDir?.path ?? DeliverCopy.noFolderYet)
@@ -249,180 +276,14 @@ struct DeliverSheet: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-
-        VStack(alignment: .leading, spacing: 5) {
-            Picker("", selection: $mode) {
-                ForEach(DeliverCopy.modes, id: \.self) {
-                    Text(DeliverCopy.modeLabel($0))
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            // All three trade-offs on screen, the selected one lit: choosing
-            // between them is the point, so they are not hidden behind it.
-            ForEach(DeliverCopy.modes, id: \.self) { m in
-                Text(DeliverCopy.modeExplainer(m))
-                    .font(Theme.caption)
-                    // Selected move reads differently from selected
-                    // hardlink/copy — the same emphasis the web dialog gives
-                    // it, in this theme's status token.
-                    .foregroundStyle(m != mode ? Theme.inkMuted
-                                     : m == "move" ? Theme.warning : Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-
-        VStack(alignment: .leading, spacing: 2) {
-            Toggle(isOn: $includeAlt) {
-                Text(DeliverCopy.includeAltLabel)
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.inkSecondary)
-            }
-            .toggleStyle(.checkbox)
-            // Visible, not a tooltip: "rejects are never included either way"
-            // is the reassurance, and a reassurance nobody hovers over isn't
-            // one. The web dialog states it in the same place.
-            Text(DeliverCopy.includeAltHelp)
-                .font(Theme.micro)
-                .foregroundStyle(Theme.inkMuted)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.leading, 19)
-        }
     }
+}
 
-    private func pickDestination() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = DeliverCopy.panelMessage
-        panel.prompt = DeliverCopy.panelPrompt
-        if panel.runModal() == .OK, let url = panel.url {
-            destDir = url
-            check()
-        }
-    }
+/// Names, capped so 900 collisions don't push the buttons off screen.
+private struct NameList: View {
+    let names: [String]
 
-    // MARK: the plan — always shown before anything can run
-
-    @ViewBuilder
-    private var planSection: some View {
-        Divider().overlay(Theme.hairline)
-
-        if busy {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text(plan == nil ? DeliverCopy.planning : DeliverCopy.running)
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.inkSecondary)
-            }
-        }
-        if let errorText {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(errorText)
-                    .font(Theme.caption)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-                if offerCopy {
-                    Button(DeliverCopy.useCopyInstead) { mode = "copy" }
-                        .font(Theme.caption)
-                }
-            }
-        }
-        if let p = plan {
-            planView(p)
-            actions(p)
-        } else if destDir == nil, errorText == nil {
-            Text(DeliverCopy.chooseFolderFirst)
-                .font(Theme.caption)
-                .foregroundStyle(Theme.inkMuted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    @ViewBuilder
-    private func planView(_ p: APIClient.DeliverReport) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(DeliverCopy.dryRunBanner)
-                .font(Theme.micro)
-                .foregroundStyle(Theme.inkMuted)
-
-            if p.count == 0 {
-                DiffLine(icon: "minus.circle",
-                         text: DeliverCopy.nothingToDeliver,
-                         tint: Theme.warning)
-            } else {
-                DiffLine(icon: "arrow.right.circle",
-                         text: DeliverCopy.countLine(p.count, dest: p.destDir))
-            }
-            if p.companions > 0 {
-                DiffLine(icon: "doc.on.doc",
-                         text: DeliverCopy.companionsLine(p.companions))
-            }
-            if !p.renamed.isEmpty {
-                DiffLine(icon: "pencil.circle",
-                         text: DeliverCopy.renamedLine(p.renamed.count))
-                nameList(p.renamed)
-            }
-            if !p.alreadyPresent.isEmpty {
-                DiffLine(icon: "equal.circle",
-                         text: DeliverCopy.alreadyPresentLine(
-                            p.alreadyPresent.count))
-                nameList(p.alreadyPresent)
-            }
-            if !p.missingSource.isEmpty {
-                DiffLine(icon: "exclamationmark.triangle",
-                         text: DeliverCopy.missingSourceLine(
-                            p.missingSource.count),
-                         tint: Theme.warning)
-                nameList(p.missingSource)
-            }
-            if p.mode == "copy" {
-                DiffLine(icon: "internaldrive",
-                         text: DeliverCopy.spaceLine(needed: p.bytesNeeded,
-                                                     free: p.freeBytes),
-                         tint: p.enoughSpace ? Theme.inkSecondary
-                             : Theme.warning)
-                if !p.enoughSpace {
-                    DiffLine(icon: "exclamationmark.triangle",
-                             text: DeliverCopy.notEnoughSpace,
-                             tint: Theme.warning)
-                }
-            }
-            if p.movesOriginals && p.crossVolume {
-                DiffLine(icon: "info.circle",
-                         text: DeliverCopy.crossVolumeMove)
-            }
-        }
-
-        // The confirm step for a move says plainly what leaves the folder and
-        // what is not deleted, and it does not look like the other two modes.
-        if p.movesOriginals {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.warning)
-                    Text(DeliverCopy.moveWarningHeading)
-                        .font(Theme.caption)
-                        .foregroundStyle(Theme.ink)
-                }
-                Text(DeliverCopy.moveWarning)
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.surfaceRaised,
-                        in: RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5)
-                .stroke(Theme.warning.opacity(0.55), lineWidth: 1))
-        }
-    }
-
-    private func nameList(_ names: [String]) -> some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             ForEach(names.prefix(6), id: \.self) { n in
                 Text(n)
@@ -439,39 +300,90 @@ struct DeliverSheet: View {
         }
         .padding(.leading, 17)
     }
+}
 
-    @ViewBuilder
-    private func actions(_ p: APIClient.DeliverReport) -> some View {
-        HStack {
-            Spacer()
-            Button("Cancel") { dismiss() }
-            // Never `.defaultAction`: there is no Return-key path into moving
-            // or duplicating the user's photographs.
-            // Confirms the plan on screen — mode and folder come from the
-            // engine's own reply, not from the controls above, so what runs
-            // cannot be something the user was never shown.
-            Button(DeliverCopy.confirmButton(p.mode, count: p.count)) {
-                run(p)
+/// The engine's plan, rendered. Identical for both actions because it is the
+/// same reply from the same endpoint — every line is a field the engine set,
+/// including which caveats apply (`mode`, `moves_originals`, `cross_volume`).
+private struct DeliveryPlanView: View {
+    let plan: APIClient.DeliverReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(DeliverCopy.dryRunBanner)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+
+            if plan.count == 0 {
+                DiffLine(icon: "minus.circle",
+                         text: DeliverCopy.nothingToDeliver,
+                         tint: Theme.warning)
+            } else {
+                DiffLine(icon: "arrow.right.circle",
+                         text: DeliverCopy.countLine(plan.count,
+                                                     dest: plan.destDir))
             }
-                .disabled(busy || p.count == 0
-                          || (p.mode == "copy" && !p.enoughSpace))
-                .tint(p.movesOriginals ? Theme.warning : nil)
+            if plan.companions > 0 {
+                DiffLine(icon: "doc.on.doc",
+                         text: DeliverCopy.companionsLine(plan.companions))
+            }
+            if !plan.renamed.isEmpty {
+                DiffLine(icon: "pencil.circle",
+                         text: DeliverCopy.renamedLine(plan.renamed.count))
+                NameList(names: plan.renamed)
+            }
+            if !plan.alreadyPresent.isEmpty {
+                DiffLine(icon: "equal.circle",
+                         text: DeliverCopy.alreadyPresentLine(
+                            plan.alreadyPresent.count))
+                NameList(names: plan.alreadyPresent)
+            }
+            if !plan.missingSource.isEmpty {
+                DiffLine(icon: "exclamationmark.triangle",
+                         text: DeliverCopy.missingSourceLine(
+                            plan.missingSource.count),
+                         tint: Theme.warning)
+                NameList(names: plan.missingSource)
+            }
+            if plan.mode == "copy" {
+                DiffLine(icon: "internaldrive",
+                         text: DeliverCopy.spaceLine(needed: plan.bytesNeeded,
+                                                     free: plan.freeBytes),
+                         tint: plan.enoughSpace ? Theme.inkSecondary
+                             : Theme.warning)
+                if !plan.enoughSpace {
+                    DiffLine(icon: "exclamationmark.triangle",
+                             text: DeliverCopy.notEnoughSpace,
+                             tint: Theme.warning)
+                }
+            }
+            if plan.movesOriginals && plan.crossVolume {
+                DiffLine(icon: "info.circle",
+                         text: DeliverCopy.crossVolumeMove)
+            }
         }
     }
+}
 
-    // MARK: result
+/// What happened, once a plan was confirmed. Shared: the delivered/moved
+/// count, the per-file failures with the engine's reason, the library's own
+/// bookkeeping, and the engine's `note` verbatim.
+private struct DeliveryResultView: View {
+    let report: APIClient.DeliverReport
+    let headline: String
+    let failedHeading: String
+    let onDone: () -> Void
 
-    @ViewBuilder
-    private func resultView(_ r: APIClient.DeliverReport) -> some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(DeliverCopy.deliveredLine(r.delivered ?? 0, dest: r.destDir))
+            Text(headline)
                 .font(Theme.body)
                 .foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let failed = r.failed, !failed.isEmpty {
+            if let failed = report.failed, !failed.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(DeliverCopy.failedHeading(failed.count))
+                    Text(failedHeading)
                         .font(Theme.caption)
                         .foregroundStyle(Theme.inkSecondary)
                     ForEach(failed.prefix(6), id: \.file) { f in
@@ -496,7 +408,19 @@ struct DeliverSheet: View {
                     .stroke(Theme.warning.opacity(0.55), lineWidth: 1))
             }
 
-            if let note = r.note {
+            // Only a move has these; hardlink and copy report zero, and a
+            // zero line would imply the library changed when it did not.
+            if let relinked = report.relinked, relinked > 0 {
+                DiffLine(icon: "link",
+                         text: MoveCopy.relinkedLine(relinked))
+            }
+            if let missing = report.markedMissing, missing > 0 {
+                DiffLine(icon: "questionmark.circle",
+                         text: MoveCopy.markedMissingLine(missing),
+                         tint: Theme.warning)
+            }
+
+            if let note = report.note {
                 // Relayed as the engine wrote it, not paraphrased: it is the
                 // record of what became of the originals.
                 Text("Engine: \(note).")
@@ -508,20 +432,44 @@ struct DeliverSheet: View {
 
         HStack {
             Spacer()
-            Button("Done") { dismiss() }
+            Button("Done") { onDone() }
         }
     }
+}
 
-    // MARK: calls
+/// The dry run / confirm plumbing, shared by both sheets.
+///
+/// It deliberately does NOT hold a mode: the mode is passed in per call, and
+/// each sheet has exactly one set of modes it can pass (`DeliverCopy.modes`,
+/// or `"move"`). There is no state here that a stray control could flip from
+/// one door to the other.
+@MainActor
+@Observable
+final class DeliveryFlow {
+    private let api = APIClient()
 
-    /// The dry run. Re-runs on every change of folder, mode or scope, so the
+    var destDir: URL?
+    var includeAlt = false
+    var plan: APIClient.DeliverReport?
+    var result: APIClient.DeliverReport?
+    var errorText: String?
+    /// Set when the engine refused a mode and names copy as one it has — the
+    /// cross-volume hardlink case, one click from being fixed. Never set for
+    /// the move action: "use copy instead" there would silently swap the act
+    /// the user chose.
+    var offerCopy = false
+    var busy = false
+    /// Stale-response guard for overlapping dry runs.
+    private var token = 0
+
+    /// The dry run. Re-run on every change of folder, mode or scope, so the
     /// plan on screen always belongs to the settings on screen.
     ///
     /// Flipping modes twice quickly issues overlapping requests that can land
     /// out of order, and a stale plan is worse than no plan here — it would
     /// describe one mode while the controls showed another. Only the newest
     /// request may write state (same discipline as `ReviewModel.refreshPhoto`).
-    private func check() {
+    func check(selectionId: Int, mode: String, canOfferCopy: Bool) {
         guard let dest = destDir else { return }
         token += 1
         let mine = token
@@ -539,13 +487,16 @@ struct DeliverSheet: View {
                 plan = r
             } catch {
                 guard mine == token else { return }
-                fail(error)
+                fail(error, mode: mode, canOfferCopy: canOfferCopy)
             }
             if mine == token { busy = false }
         }
     }
 
-    private func run(_ p: APIClient.DeliverReport) {
+    /// Confirms the plan on screen — mode and folder come from the engine's
+    /// own reply, not from the controls, so what runs cannot be something the
+    /// user was never shown.
+    func run(_ p: APIClient.DeliverReport, selectionId: Int) {
         token += 1
         let mine = token
         errorText = nil
@@ -560,13 +511,13 @@ struct DeliverSheet: View {
                 result = r
             } catch {
                 guard mine == token else { return }
-                fail(error)
+                fail(error, mode: p.mode, canOfferCopy: false)
             }
             if mine == token { busy = false }
         }
     }
 
-    private func fail(_ error: Error) {
+    private func fail(_ error: Error, mode: String, canOfferCopy: Bool) {
         guard let apiError = error as? APIError else {
             errorText = String(describing: error)
             return
@@ -575,7 +526,310 @@ struct DeliverSheet: View {
                                           message: apiError.description)
         // Cross-volume hardlink: the engine says use copy, so offer the click
         // rather than making the user find the picker again.
-        offerCopy = apiError.code == "delivery_impossible" && mode != "copy"
+        offerCopy = canOfferCopy && apiError.code == "delivery_impossible"
+            && mode != "copy"
             && (apiError.detail?.modes?.contains("copy") ?? true)
+    }
+}
+
+// MARK: - Deliver files… (hardlink or copy — never move)
+
+/// The non-destructive door. Nothing in here relocates a file: the modes are
+/// `DeliverCopy.modes`, which is hardlink and copy, and the confirm re-sends
+/// the mode from the engine's own plan.
+struct DeliverSheet: View {
+    let selectionId: Int
+    @Environment(\.dismiss) private var dismiss
+
+    /// Hardlink is the engine's default too (§3.2b) — the cheapest mode that
+    /// leaves the originals alone.
+    @State private var mode = "hardlink"
+    @State private var flow = DeliveryFlow()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(DeliverCopy.title)
+                .font(Theme.heading)
+                .foregroundStyle(Theme.ink)
+
+            if let result = flow.result {
+                DeliveryResultView(
+                    report: result,
+                    headline: DeliverCopy.deliveredLine(result.delivered ?? 0,
+                                                        dest: result.destDir),
+                    failedHeading: DeliverCopy.failedHeading(
+                        result.failed?.count ?? 0),
+                    onDone: { dismiss() })
+            } else {
+                setupView
+                planSection
+            }
+        }
+        .padding(18)
+        .frame(width: 520)
+        .background(Theme.surface)
+        .onChange(of: mode) { check() }
+        .onChange(of: flow.includeAlt) { check() }
+    }
+
+    // MARK: setup — folder, mode, scope
+
+    @ViewBuilder
+    private var setupView: some View {
+        Text(DeliverCopy.intro)
+            .font(Theme.caption)
+            .foregroundStyle(Theme.inkSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+        DestinationRow(destDir: flow.destDir,
+                       panelMessage: DeliverCopy.panelMessage) { url in
+            flow.destDir = url
+            check()
+        }
+
+        VStack(alignment: .leading, spacing: 5) {
+            Picker("", selection: $mode) {
+                ForEach(DeliverCopy.modes, id: \.self) {
+                    Text(DeliverCopy.modeLabel($0))
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            // Both trade-offs on screen, the selected one lit: choosing
+            // between them is the point, so they are not hidden behind it.
+            ForEach(DeliverCopy.modes, id: \.self) { m in
+                Text(DeliverCopy.modeExplainer(m))
+                    .font(Theme.caption)
+                    .foregroundStyle(m == mode ? Theme.ink : Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(isOn: $flow.includeAlt) {
+                Text(DeliverCopy.includeAltLabel)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.inkSecondary)
+            }
+            .toggleStyle(.checkbox)
+            // Visible, not a tooltip: "rejects are never included either way"
+            // is the reassurance, and a reassurance nobody hovers over isn't
+            // one. The web dialog states it in the same place.
+            Text(DeliverCopy.includeAltHelp)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 19)
+        }
+    }
+
+    // MARK: the plan — always shown before anything can run
+
+    @ViewBuilder
+    private var planSection: some View {
+        Divider().overlay(Theme.hairline)
+
+        if flow.busy {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(flow.plan == nil ? DeliverCopy.planning
+                     : DeliverCopy.running)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.inkSecondary)
+            }
+        }
+        if let errorText = flow.errorText {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(errorText)
+                    .font(Theme.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                if flow.offerCopy {
+                    Button(DeliverCopy.useCopyInstead) { mode = "copy" }
+                        .font(Theme.caption)
+                }
+            }
+        }
+        if let p = flow.plan {
+            DeliveryPlanView(plan: p)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                // Never `.defaultAction`: there is no Return-key path into
+                // duplicating the user's photographs either.
+                Button(DeliverCopy.confirmButton(p.mode, count: p.count)) {
+                    flow.run(p, selectionId: selectionId)
+                }
+                .disabled(flow.busy || p.count == 0
+                          || (p.mode == "copy" && !p.enoughSpace))
+            }
+        } else if flow.destDir == nil, flow.errorText == nil {
+            Text(DeliverCopy.chooseFolderFirst)
+                .font(Theme.caption)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func check() {
+        flow.check(selectionId: selectionId, mode: mode, canOfferCopy: true)
+    }
+}
+
+// MARK: - Move keepers… (move, and nothing else)
+
+/// The one action that relocates the user's originals (§3.2b). It has no mode
+/// control: it sends `move`, always, and it says so before a folder is even
+/// chosen rather than revealing it after the plan comes back.
+struct MoveKeepersSheet: View {
+    let selectionId: Int
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var flow = DeliveryFlow()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.warning)
+                Text(MoveCopy.title)
+                    .font(Theme.heading)
+                    .foregroundStyle(Theme.ink)
+            }
+
+            if let result = flow.result {
+                DeliveryResultView(
+                    report: result,
+                    headline: DeliverCopy.deliveredLine(result.delivered ?? 0,
+                                                        dest: result.destDir),
+                    failedHeading: DeliverCopy.failedHeading(
+                        result.failed?.count ?? 0),
+                    onDone: { dismiss() })
+            } else {
+                setupView
+                planSection
+            }
+        }
+        .padding(18)
+        .frame(width: 520)
+        .background(Theme.surface)
+        .onChange(of: flow.includeAlt) { check() }
+    }
+
+    // MARK: setup — folder and scope
+
+    @ViewBuilder
+    private var setupView: some View {
+        Text(MoveCopy.intro)
+            .font(Theme.caption)
+            .foregroundStyle(Theme.inkSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+        DestinationRow(destDir: flow.destDir,
+                       panelMessage: MoveCopy.panelMessage) { url in
+            flow.destDir = url
+            check()
+        }
+
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(isOn: $flow.includeAlt) {
+                Text(DeliverCopy.includeAltLabel)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.inkSecondary)
+            }
+            .toggleStyle(.checkbox)
+            Text(DeliverCopy.includeAltHelp)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 19)
+        }
+    }
+
+    private var warningBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.warning)
+                Text(MoveCopy.warningHeading)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.ink)
+            }
+            Text(MoveCopy.warning)
+                .font(Theme.caption)
+                .foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surfaceRaised,
+                    in: RoundedRectangle(cornerRadius: 5))
+        .overlay(RoundedRectangle(cornerRadius: 5)
+            .stroke(Theme.warning.opacity(0.55), lineWidth: 1))
+    }
+
+    // MARK: the plan — mandatory dry run, no confirm without it
+
+    @ViewBuilder
+    private var planSection: some View {
+        Divider().overlay(Theme.hairline)
+
+        if flow.busy {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(flow.plan == nil ? DeliverCopy.planning
+                     : MoveCopy.running)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.inkSecondary)
+            }
+        }
+        if let errorText = flow.errorText {
+            Text(errorText)
+                .font(Theme.caption)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let p = flow.plan {
+            DeliveryPlanView(plan: p)
+        } else if flow.destDir == nil, flow.errorText == nil {
+            Text(DeliverCopy.chooseFolderFirst)
+                .font(Theme.caption)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        // Always on screen — before any plan exists, so the user knows what
+        // this door is on opening it, and immediately above the confirm, which
+        // is the last thing read before clicking it. Same placement as the web
+        // client's move dialog.
+        warningBlock
+
+        if let p = flow.plan {
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                // Never `.defaultAction`: there is no Return-key path into
+                // moving the user's photographs. Tinted, and it names the act
+                // and the count rather than saying "OK".
+                Button(MoveCopy.confirmButton(count: p.count)) {
+                    flow.run(p, selectionId: selectionId)
+                }
+                .disabled(flow.busy || p.count == 0)
+                .tint(Theme.warning)
+            }
+        } else {
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+            }
+        }
+    }
+
+    /// The only mode this sheet can ask for.
+    private func check() {
+        flow.check(selectionId: selectionId, mode: "move",
+                   canOfferCopy: false)
     }
 }

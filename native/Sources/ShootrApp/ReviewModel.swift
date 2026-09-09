@@ -30,8 +30,14 @@ final class ReviewModel {
     var showExport = false
     /// F — deliver the keepers as FILES into a folder (design 07 §3.2b), for
     /// the workflow with no Lightroom in it. Separate action from Export,
-    /// which writes XMP sidecars in place.
+    /// which writes XMP sidecars in place. Hardlink or copy only: the
+    /// originals stay where they are.
     var showDeliver = false
+    /// M — move the keepers out of their folder (design 07 §3.2b). Its own
+    /// action, not a mode of the deliver sheet: relocating someone's originals
+    /// is a different act from producing a second view of them, and burying it
+    /// in a picker makes the most consequential choice the easiest to mis-hit.
+    var showMove = false
     var showSettings = false
     /// D — the style screens (design 08 §7a): look families + the predicted
     /// develop settings for this shoot, and the XMP write for them.

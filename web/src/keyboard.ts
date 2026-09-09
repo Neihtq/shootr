@@ -19,6 +19,7 @@ export interface KeyboardHandlers {
   onToggleEyes?: () => void;
   onShowShortcuts?: () => void;
   onOpenDeliver?: () => void;
+  onOpenMove?: () => void;
   /** Disable while a modal (compare view) owns the keyboard. */
   enabled?: boolean;
 }
@@ -71,6 +72,13 @@ export function useKeyboard(h: KeyboardHandlers) {
         // F for "files" — matches the native client, which must not diverge.
         case "f":
           h.onOpenDeliver?.();
+          break;
+        // M for "move keepers" — a separate action from F, so a separate key
+        // (design 07 §3.2b). It only OPENS the dialog: the move itself still
+        // needs a dry run and an explicit confirm click, so there is no
+        // keystroke that relocates a photograph.
+        case "m":
+          h.onOpenMove?.();
           break;
         case " ":
           h.onTogglePick?.();

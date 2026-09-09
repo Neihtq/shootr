@@ -395,14 +395,20 @@ struct GroupReviewView: View {
                 ExportSheet(selectionId: selId)
             }
         }
+        .sheet(isPresented: $model.showDeliver) {
+            if let selId = model.shoot?.latestSelectionId {
+                DeliverSheet(selectionId: selId)
+            }
+        }
         // A confirmed move rewrites the photo's path or marks it missing, so
         // the detail on screen is stale afterwards. Re-read the current frame
         // on close (the web client invalidates its whole query cache for the
-        // same reason); one cheap GET, and harmless after a cancel.
-        .sheet(isPresented: $model.showDeliver,
+        // same reason); one cheap GET, and harmless after a cancel. The
+        // deliver sheet above needs none of this — it cannot change a path.
+        .sheet(isPresented: $model.showMove,
                onDismiss: { Task { await model.refreshPhoto() } }) {
             if let selId = model.shoot?.latestSelectionId {
-                DeliverSheet(selectionId: selId)
+                MoveKeepersSheet(selectionId: selId)
             }
         }
         .sheet(isPresented: $model.showSettings) {
@@ -484,14 +490,27 @@ struct GroupReviewView: View {
             .help("Write the selects to XMP sidecars for Lightroom")
             // The no-Lightroom path (design 07 §3.2b): the keepers as files in
             // a folder, rather than sidecars to import. Same label and same
-            // sentence as the web client's button.
+            // sentence as the web client's button. Hardlink or copy — this
+            // button cannot move anything.
             Button("Deliver files…") {
                 model.showDeliver = true
             }
             .font(Theme.caption)
             .disabled(model.shoot?.latestSelectionId == nil)
-            .help("Put the keepers in a folder as files — no Lightroom "
-                  + "needed (F)")
+            .help("Put the keepers in a folder as files — hardlink or copy, "
+                  + "originals stay put (F)")
+            // Its own button, next to but not inside the one above (§3.2b):
+            // moving the originals is the consequential act, so it is reached
+            // deliberately, tinted, and never by mis-clicking a segment of a
+            // mode picker.
+            Button("Move keepers…") {
+                model.showMove = true
+            }
+            .font(Theme.caption)
+            .disabled(model.shoot?.latestSelectionId == nil)
+            .tint(Theme.warning)
+            .help("Move the keepers out of their folder into one you choose — "
+                  + "plans first, nothing is deleted (M)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -709,14 +728,20 @@ enum Shortcuts {
         Item("?", "this list"),
     ]
 
-    /// Handing the cull over. F is free on every screen — the review screen's
-    /// letters (P A X Z C S O B E D) and the style screen's (R L N C W) were
-    /// all taken, and F is what "files" starts with.
+    /// Handing the cull over. Two keys because it is two actions (design 07
+    /// §3.2b): F never moves anything, M only moves. Both were free on every
+    /// screen — the review screen's letters (P A X Z C S O B E D) and the
+    /// style screen's (J K R L N C W) were the only ones taken.
     static let deliver: [Item] = [
         Item("F", "deliver files…",
-             "put the keepers in a folder you choose — hardlink, copy or "
-             + "move. Always plans first; writes only on confirm, and never "
-             + "delivers a rejected frame"),
+             "put the keepers in a folder you choose — hardlink or copy, your "
+             + "originals left exactly where they are. Always plans first; "
+             + "writes only on confirm, and never delivers a rejected frame"),
+        Item("M", "move keepers…",
+             "move the keepers OUT of their folder into one you choose — the "
+             + "originals are relocated, and Shootr updates where it thinks "
+             + "they live. Separate from F on purpose. Always plans first; "
+             + "nothing moves until you confirm, and nothing is deleted"),
     ]
 
     /// The compact subset for the always-visible strip.
@@ -1229,8 +1254,8 @@ struct KeyCatcher: NSViewRepresentable {
                 // Sheets own the keyboard while open (compare handles its
                 // own Z; export/settings are form UIs).
                 if model.comparing || model.showExport || model.showDeliver
-                    || model.showSettings || model.showShortcuts
-                    || model.showStyle {
+                    || model.showMove || model.showSettings
+                    || model.showShortcuts || model.showStyle {
                     return event
                 }
                 // Don't steal keys from an active text field (the field
@@ -1296,6 +1321,13 @@ struct KeyCatcher: NSViewRepresentable {
             case "f":
                 if model.shoot?.latestSelectionId != nil {
                     model.showDeliver = true
+                }
+            // M — move the keepers out of their folder. A different key for a
+            // different act (§3.2b), and the sheet still plans first and
+            // confirms before anything is relocated.
+            case "m":
+                if model.shoot?.latestSelectionId != nil {
+                    model.showMove = true
                 }
             // "/" too: ? is shift-/ on US layouts but not on every layout,
             // and the unshifted key is what people actually press.
