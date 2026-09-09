@@ -121,6 +121,38 @@ Also emit a plain-text/CSV file list the user can drag into LrC, plus an optiona
 `.lrcat`-independent "Selects" folder of **hardlinks** (not copies — no disk cost, no
 duplication). Works regardless of sidecar/DNG issues.
 
+### 3.2b Delivering the selects as files (no Lightroom at all)
+
+Requested 2026-09-09: someone who wants only the culling has no use for sidecars they
+must import. They want the keepers as *files*, in a folder they choose. Three modes,
+because they trade differently and the right default is not the one they asked for:
+
+| mode | disk cost | originals | good for |
+|---|---|---|---|
+| **hardlink** (default) | none | untouched, still in place | "show me the keepers" on the same drive |
+| **copy** | full size again | untouched | handing a folder to someone, or another drive |
+| **move** | none | **relocated** | freeing the shoot folder down to keepers |
+
+Rules this must obey, and why:
+
+- **Rejects are never touched.** Default scope is `pick`; `alt` is opt-in. Rule 2
+  (culling never deletes) is about the *engine* never removing a photo on its own
+  judgement — a user pointing at a folder and asking for their picks is a different act,
+  and it still must not put a rejected frame at risk.
+- **A move is never a delete-then-hope.** Same volume uses `os.replace` (atomic).
+  Across volumes it copies, verifies the copy by size **and content id**, and only then
+  unlinks the source. A failure at any point leaves the original where it was.
+- **The library never lies afterwards.** A moved photo inside the library root gets its
+  `rel_path` updated in place (identity is content-based, so its analysis survives —
+  §02). Moved outside, it is marked `missing=1`, which is non-destructive and honest,
+  rather than leaving a path that resolves to nothing.
+- **Sidecars and JPEG siblings travel with the RAW.** Leaving a `.xmp` behind orphans the
+  ratings; leaving the JPEG behind splits a pair the app deliberately keeps together.
+- **Dry run first, always.** The plan states counts, name collisions, whether the mode is
+  even possible (hardlinks cannot cross volumes), and for copies whether the destination
+  has room. Nothing is written without explicit confirmation, and nothing overwrites an
+  existing file — collisions get a numbered suffix and are reported.
+
 ### 3.3 Lua plugin (M5, optional)
 The official SDK can create collections and set flags/ratings from *inside* LrC — best UX
 and no catalog-safety issue, since LrC does the writing. Deferred: it's a separate
