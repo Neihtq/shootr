@@ -11,6 +11,8 @@ import { useEffect } from "react";
 import { del, get, patch, post, put } from "./client";
 import type {
   AnalyzeStart,
+  DeliveryMode,
+  DeliveryResponse,
   ExportPreview,
   Group,
   JobProgress,
@@ -183,6 +185,33 @@ export const useExport = (selectionId: number | null) => {
       }),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["selection", selectionId] }),
+  });
+};
+
+/** Deliver the selects as files (design 07 §3.2b).
+ *
+ * One endpoint for both steps: without `confirm` it is a dry run that writes
+ * nothing and returns the plan, with `confirm` it runs that plan. The client
+ * always asks for the plan first — it does not decide whether a mode is
+ * possible, whether there is room, or what collides (design 10 §1).
+ *
+ * `include_alt` widens the scope from picks to picks + alts. There is no value
+ * that includes rejects. */
+export const useDeliverSelects = (selectionId: number | null) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      dest_dir: string;
+      mode: DeliveryMode;
+      include_alt: boolean;
+      confirm: boolean;
+    }) => post<DeliveryResponse>(`/api/selections/${selectionId}/deliver`, body),
+    onSuccess: (r) => {
+      // A confirmed move relocates originals: the engine rewrites photo paths
+      // or marks them missing, so anything the client shows about those photos
+      // is stale. A dry run wrote nothing — nothing to refresh.
+      if (!r.dry_run) qc.invalidateQueries();
+    },
   });
 };
 

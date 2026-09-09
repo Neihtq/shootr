@@ -34,11 +34,15 @@ export function GroupReview({
   shootId,
   selectionId,
   onOpenExport,
+  onOpenDeliver,
   onOpenStyle,
 }: {
   shootId: number;
   selectionId: number | null;
   onOpenExport: () => void;
+  /** Deliver the keepers as files into a folder (design 07 §3.2b) — the
+   * no-Lightroom path, so it sits beside Export, not inside it. */
+  onOpenDeliver: () => void;
   onOpenStyle: () => void;
 }) {
   const { data: groups } = useGroups(shootId);
@@ -216,9 +220,17 @@ export function GroupReview({
               </button>
               <button
                 onClick={onOpenExport}
+                title="Write the selects to XMP sidecars for Lightroom"
                 className="rounded border border-neutral-700 px-2 py-0.5 hover:bg-neutral-800"
               >
                 Export…
+              </button>
+              <button
+                onClick={onOpenDeliver}
+                title="Put the keepers in a folder as files — no Lightroom needed"
+                className="rounded border border-neutral-700 px-2 py-0.5 hover:bg-neutral-800"
+              >
+                Deliver files…
               </button>
             </div>
 

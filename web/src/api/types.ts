@@ -180,6 +180,68 @@ export interface ExportPreview {
   backup_dir: string;
 }
 
+/** POST /api/selections/{id}/deliver (design 07 §3.2b) — put the keepers in a
+ * folder as FILES, for the workflow with no Lightroom in it.
+ *
+ * The engine's own mode list; mirrored so a picker cannot offer a fourth. */
+export const DELIVERY_MODES = ["hardlink", "copy", "move"] as const;
+export type DeliveryMode = (typeof DELIVERY_MODES)[number];
+
+/** The plan the engine computed. Present on the dry run AND echoed on the
+ * confirmed run, so the result is read against the plan it came from. */
+interface DeliveryPlan {
+  mode: DeliveryMode;
+  dest_dir: string;
+  /** Photos in scope: picks, plus alts only when `include_alt` was sent.
+   * Rejects are never in scope, whatever the client asks for. */
+  count: number;
+  /** Sidecars and JPEG siblings that travel with the RAWs. */
+  companions: number;
+  /** Destination names a collision forced a numbered suffix on. Nothing is
+   * ever overwritten, so a collision renames rather than replaces. */
+  renamed: string[];
+  /** Sources already hardlinked into the destination — skipped, not redone. */
+  already_present: string[];
+  /** In the selection but not on disk right now (offline drive, moved file). */
+  missing_source: string[];
+  /** Destination is on a different volume than the photos. Fatal for
+   * hardlink; for move it means the verified copy-then-unlink path. */
+  cross_volume: boolean;
+  bytes_needed: number;
+  free_bytes: number | null;
+  /** The engine's verdict, not a comparison the client makes. Always true for
+   * modes that consume no space. */
+  enough_space: boolean;
+  /** True for `move`: the user's originals leave their current folder. The
+   * client must be able to say so before it happens. */
+  moves_originals: boolean;
+}
+
+/** Dry run: nothing was written. This is what the user confirms against. */
+export interface DeliveryPreview extends DeliveryPlan {
+  dry_run: true;
+}
+
+export interface DeliveryResult extends DeliveryPlan {
+  dry_run: false;
+  delivered: number;
+  /** Per-file failures, collected rather than fatal — one unreadable photo
+   * does not abandon the rest. */
+  failed: { file: string; error: string }[];
+  /** Moved photos whose library path was updated in place (still inside the
+   * library root; identity is content-based, so analysis survives). */
+  relinked: number;
+  /** Moved out of the library root and marked missing — honest, and nothing
+   * was deleted. */
+  marked_missing: number;
+  /** The engine's plain sentence about what happened to the library's paths.
+   * Relayed verbatim, never paraphrased. */
+  note: string;
+}
+
+/** One endpoint, discriminated by `dry_run`. */
+export type DeliveryResponse = DeliveryPreview | DeliveryResult;
+
 /** GET /api/style/families (design 08 §3). Discovered from the user's own
  * edits, never assumed — read-only in the UI. `median` is the family's
  * median edit as the ENGINE computed it; the client only renders it. */

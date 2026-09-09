@@ -3,6 +3,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { DeliverDialog } from "./components/DeliverDialog";
 import { ExportDialog } from "./components/ExportDialog";
 import { GroupReview } from "./components/GroupReview";
 import { JobHeader } from "./components/JobHeader";
@@ -30,6 +31,7 @@ function Shell() {
     screen: "review",
   });
   const [exportOpen, setExportOpen] = useState(false);
+  const [deliverOpen, setDeliverOpen] = useState(false);
 
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-200">
@@ -72,6 +74,7 @@ function Shell() {
                 shootId={view.shootId}
                 selectionId={view.selectionId}
                 onOpenExport={() => setExportOpen(true)}
+                onOpenDeliver={() => setDeliverOpen(true)}
                 onOpenStyle={() => setView((v) => ({ ...v, screen: "style" }))}
               />
             ) : (
@@ -84,6 +87,12 @@ function Shell() {
         <ExportDialog
           selectionId={view.selectionId}
           onClose={() => setExportOpen(false)}
+        />
+      )}
+      {deliverOpen && view.selectionId !== null && (
+        <DeliverDialog
+          selectionId={view.selectionId}
+          onClose={() => setDeliverOpen(false)}
         />
       )}
     </div>
