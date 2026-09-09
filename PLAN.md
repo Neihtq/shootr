@@ -222,7 +222,10 @@ outcome and can be built now.
 - ~~DNG detection → warn and skip (no embedded-XMP writes)~~
 - ~~Rejects write nothing by default~~
 - ~~CSV file-list export~~
-- ~~Hardlink "Selects" folder (`xmp.export_hardlinks`; API/UI hookup when wanted)~~
+- ~~Hardlink "Selects" folder~~ — superseded by `shootr.deliver` (2026-09-09, 07 §3.2b):
+  deliver picks to a chosen folder by hardlink / copy / **move**, for users with no
+  Lightroom at all. Dry run always, rejects never included, cross-volume move verifies
+  by content id before unlinking, library paths updated or honestly marked missing
 - LrC-running + live-catalog refusal check (belongs with catalog *import*, M2)
 
 ### Web client (`11`)
