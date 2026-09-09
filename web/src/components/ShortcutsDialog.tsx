@@ -40,6 +40,10 @@ const INSPECT: Item[] = [
   { key: "O", label: "composition overlay", detail: "thirds grid + face boxes" },
   { key: "B", label: "eye crops", detail: "full-res eyes of the primary face — blink check" },
   { key: "E", label: "evidence panel", detail: "per-metric scores behind the verdict" },
+  { key: "F", label: "deliver files…",
+    detail: "put the keepers in a folder you choose — hardlink, copy or move. "
+      + "Always plans first; writes only on confirm, and never delivers a "
+      + "rejected frame" },
   { key: "?", label: "this list" },
 ];
 

@@ -395,6 +395,16 @@ struct GroupReviewView: View {
                 ExportSheet(selectionId: selId)
             }
         }
+        // A confirmed move rewrites the photo's path or marks it missing, so
+        // the detail on screen is stale afterwards. Re-read the current frame
+        // on close (the web client invalidates its whole query cache for the
+        // same reason); one cheap GET, and harmless after a cancel.
+        .sheet(isPresented: $model.showDeliver,
+               onDismiss: { Task { await model.refreshPhoto() } }) {
+            if let selId = model.shoot?.latestSelectionId {
+                DeliverSheet(selectionId: selId)
+            }
+        }
         .sheet(isPresented: $model.showSettings) {
             ShootSettingsSheet(model: model)
         }
@@ -468,6 +478,20 @@ struct GroupReviewView: View {
             }
             .font(Theme.caption)
             .disabled(model.shoot?.latestSelectionId == nil)
+            // Same sentence as the web client's Export… button, now that the
+            // two delivery paths sit side by side and the difference between
+            // them is the thing to state.
+            .help("Write the selects to XMP sidecars for Lightroom")
+            // The no-Lightroom path (design 07 §3.2b): the keepers as files in
+            // a folder, rather than sidecars to import. Same label and same
+            // sentence as the web client's button.
+            Button("Deliver files…") {
+                model.showDeliver = true
+            }
+            .font(Theme.caption)
+            .disabled(model.shoot?.latestSelectionId == nil)
+            .help("Put the keepers in a folder as files — no Lightroom "
+                  + "needed (F)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -685,6 +709,16 @@ enum Shortcuts {
         Item("?", "this list"),
     ]
 
+    /// Handing the cull over. F is free on every screen — the review screen's
+    /// letters (P A X Z C S O B E D) and the style screen's (R L N C W) were
+    /// all taken, and F is what "files" starts with.
+    static let deliver: [Item] = [
+        Item("F", "deliver files…",
+             "put the keepers in a folder you choose — hardlink, copy or "
+             + "move. Always plans first; writes only on confirm, and never "
+             + "delivers a rejected frame"),
+    ]
+
     /// The compact subset for the always-visible strip.
     static let strip: [Item] = [
         Item("P", "pick"), Item("A", "alt"), Item("X", "reject"),
@@ -753,6 +787,7 @@ struct ShortcutsSheet: View {
                 section("Move", Shortcuts.navigate)
                 section("Judge", Shortcuts.judge)
                 section("Inspect", Shortcuts.inspect)
+                section("Deliver", Shortcuts.deliver)
             }
 
             Divider().overlay(Theme.hairline).padding(.vertical, 14)
@@ -760,7 +795,7 @@ struct ShortcutsSheet: View {
             HowVerdictsWork(profile: profile)
         }
         .padding(20)
-        .frame(width: 720)
+        .frame(width: 860)
         .background(Theme.surface)
         .onKeyPress(.escape) { dismiss(); return .handled }
     }
@@ -1193,8 +1228,9 @@ struct KeyCatcher: NSViewRepresentable {
                 guard let self, let model = self.model else { return event }
                 // Sheets own the keyboard while open (compare handles its
                 // own Z; export/settings are form UIs).
-                if model.comparing || model.showExport || model.showSettings
-                    || model.showShortcuts || model.showStyle {
+                if model.comparing || model.showExport || model.showDeliver
+                    || model.showSettings || model.showShortcuts
+                    || model.showStyle {
                     return event
                 }
                 // Don't steal keys from an active text field (the field
@@ -1254,6 +1290,13 @@ struct KeyCatcher: NSViewRepresentable {
             case "o": model.showComposition.toggle()
             case "b": model.showEyes.toggle()
             case "d": model.showStyle = true
+            // F — deliver the keepers as files. Gated on there being a
+            // selection: the sheet has nothing to plan without one, and an
+            // empty sheet reads as a broken key.
+            case "f":
+                if model.shoot?.latestSelectionId != nil {
+                    model.showDeliver = true
+                }
             // "/" too: ? is shift-/ on US layouts but not on every layout,
             // and the unshifted key is what people actually press.
             case "?", "/": model.showShortcuts = true

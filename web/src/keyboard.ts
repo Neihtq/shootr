@@ -18,6 +18,7 @@ export interface KeyboardHandlers {
   onToggleComposition?: () => void;
   onToggleEyes?: () => void;
   onShowShortcuts?: () => void;
+  onOpenDeliver?: () => void;
   /** Disable while a modal (compare view) owns the keyboard. */
   enabled?: boolean;
 }
@@ -66,6 +67,10 @@ export function useKeyboard(h: KeyboardHandlers) {
           break;
         case "c":
           h.onToggleCompare?.();
+          break;
+        // F for "files" — matches the native client, which must not diverge.
+        case "f":
+          h.onOpenDeliver?.();
           break;
         case " ":
           h.onTogglePick?.();

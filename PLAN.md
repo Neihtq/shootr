@@ -222,6 +222,9 @@ outcome and can be built now.
 - ~~DNG detection → warn and skip (no embedded-XMP writes)~~
 - ~~Rejects write nothing by default~~
 - ~~CSV file-list export~~
+- ~~Deliver selects as files, both clients~~ (2026-09-09) — dialog with mode choice,
+  mandatory dry run, distinct move warning, `F` in both clients; native uses NSOpenPanel,
+  web a typed path (browser limitation). Superseded the bare hardlink helper below
 - ~~Hardlink "Selects" folder~~ — superseded by `shootr.deliver` (2026-09-09, 07 §3.2b):
   deliver picks to a chosen folder by hardlink / copy / **move**, for users with no
   Lightroom at all. Dry run always, rejects never included, cross-volume move verifies

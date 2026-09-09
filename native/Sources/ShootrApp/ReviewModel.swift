@@ -28,6 +28,10 @@ final class ReviewModel {
     var showEyes = false  // B — full-res eye crops (blink check)
     var comparing = false  // C — synced compare sheet
     var showExport = false
+    /// F — deliver the keepers as FILES into a folder (design 07 §3.2b), for
+    /// the workflow with no Lightroom in it. Separate action from Export,
+    /// which writes XMP sidecars in place.
+    var showDeliver = false
     var showSettings = false
     /// D — the style screens (design 08 §7a): look families + the predicted
     /// develop settings for this shoot, and the XMP write for them.

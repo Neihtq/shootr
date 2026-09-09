@@ -131,6 +131,7 @@ export function GroupReview({
     onToggleComposition: () => setShowComposition((v) => !v),
     onToggleEyes: () => setShowEyes((v) => !v),
     onShowShortcuts: () => setShowShortcuts(true),
+    onOpenDeliver: () => onOpenDeliver?.(),
     onTogglePick: () => {
       const current = photoId !== null
         ? entryByPhoto.get(photoId)?.state : undefined;

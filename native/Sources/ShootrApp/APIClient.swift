@@ -498,6 +498,14 @@ struct StyleWriteResult: Codable {
 
 // MARK: - Client
 
+/// Endpoint-specific facts the engine attaches to a fault — `modes` for
+/// `delivery_impossible`, so a refused mode can offer the ones the engine
+/// actually knows about instead of a list hard-coded here. Every field is
+/// optional: a fault that carries no extras decodes exactly as before.
+struct EngineFaultDetail: Codable {
+    let modes: [String]?
+}
+
 /// The engine's structured error body (`{"detail": {code, message, …}}`).
 /// Decoding it is what lets the UI answer `insufficient_history` with useful
 /// copy instead of dumping a JSON blob at the user.
@@ -505,6 +513,7 @@ struct EngineFault: Codable {
     let code: String
     let message: String
     let retryable: Bool?
+    let detail: EngineFaultDetail?
 }
 
 private struct EngineFaultEnvelope: Codable {
@@ -531,6 +540,13 @@ enum APIError: Error, CustomStringConvertible {
     /// `no_selection`, `not_analyzed`, …), so views can map it to copy.
     var code: String? {
         if case .engine(_, let fault) = self { return fault.code }
+        return nil
+    }
+
+    /// The fault's extras when it carried any (`delivery_impossible` names
+    /// the modes the engine has).
+    var detail: EngineFaultDetail? {
+        if case .engine(_, let fault) = self { return fault.detail }
         return nil
     }
 }
@@ -757,6 +773,101 @@ struct APIClient: Sendable {
             ExportBody(confirmOverwrite: confirmOverwrite))
         return try await request(
             "POST", "api/selections/\(selectionId)/export", body: body)
+    }
+
+    // MARK: deliver selects as files (design 07 §3.2b)
+
+    /// One file the engine could not deliver, with the engine's own reason.
+    /// Reported per file because a single unreadable photo must not read as a
+    /// failed run of 200.
+    struct DeliverFailure: Codable {
+        let file: String
+        let error: String
+    }
+
+    /// A delivery plan, and — after a confirmed run — what happened to it.
+    ///
+    /// The dry run and the confirmed run return the same shape, the confirmed
+    /// one with five extra fields, so those are optional here rather than a
+    /// second struct that would drift from this one. Nothing in it is computed:
+    /// `enoughSpace` is the engine comparing `bytesNeeded` against
+    /// `freeBytes`, and `movesOriginals` is the engine saying this mode
+    /// relocates the user's files (rule 6).
+    struct DeliverReport: Codable {
+        let dryRun: Bool
+        let mode: String
+        let destDir: String
+        let count: Int
+        /// Sidecars and JPEG siblings travelling with the RAWs.
+        let companions: Int
+        /// Destination names that will get a numbered suffix. Nothing in the
+        /// folder is overwritten — the engine renames instead.
+        let renamed: [String]
+        let alreadyPresent: [String]
+        let missingSource: [String]
+        let crossVolume: Bool
+        let bytesNeeded: Int64
+        /// nil when the engine could not read the destination's free space —
+        /// rendered as "not known", never as zero bytes free (rule 8).
+        let freeBytes: Int64?
+        let enoughSpace: Bool
+        /// True for `move` alone. The client must be able to say so before
+        /// anything runs, which is why the engine states it.
+        let movesOriginals: Bool
+
+        // Confirmed run only; nil on a dry run.
+        let delivered: Int?
+        let failed: [DeliverFailure]?
+        /// Library rows whose path was updated in place (moved, still inside
+        /// the library root).
+        let relinked: Int?
+        /// Moved outside the library and marked missing — non-destructive.
+        let markedMissing: Int?
+        /// The engine's sentence about what became of the originals. Shown
+        /// verbatim: paraphrasing it is how the two clients start telling
+        /// different stories about the same move.
+        let note: String?
+
+        enum CodingKeys: String, CodingKey {
+            case mode, count, companions, renamed, delivered, failed, note
+            case dryRun = "dry_run"
+            case destDir = "dest_dir"
+            case alreadyPresent = "already_present"
+            case missingSource = "missing_source"
+            case crossVolume = "cross_volume"
+            case bytesNeeded = "bytes_needed"
+            case freeBytes = "free_bytes"
+            case enoughSpace = "enough_space"
+            case movesOriginals = "moves_originals"
+            case relinked = "relinked"
+            case markedMissing = "marked_missing"
+        }
+    }
+
+    struct DeliverBody: Codable {
+        let destDir: String
+        let mode: String
+        let includeAlt: Bool
+        let confirm: Bool
+        enum CodingKeys: String, CodingKey {
+            case mode, confirm
+            case destDir = "dest_dir"
+            case includeAlt = "include_alt"
+        }
+    }
+
+    /// `confirm: false` is a DRY RUN and writes nothing. 409
+    /// `delivery_impossible` (the fault names the engine's modes), 404
+    /// `no_selection`. Rejects are never delivered whatever is asked — that is
+    /// the engine's rule, not a filter applied here.
+    func deliver(selectionId: Int, destDir: String, mode: String,
+                 includeAlt: Bool, confirm: Bool)
+        async throws -> DeliverReport {
+        let body = try JSONEncoder().encode(DeliverBody(
+            destDir: destDir, mode: mode, includeAlt: includeAlt,
+            confirm: confirm))
+        return try await request(
+            "POST", "api/selections/\(selectionId)/deliver", body: body)
     }
 
     // MARK: shoot settings
