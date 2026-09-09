@@ -168,16 +168,22 @@ rejects write nothing). In Lightroom: select the photos, then
 
 ### Using it without Lightroom
 
-**Deliver files…** puts the keepers in a folder you choose, so the cull is
-useful on its own. Three modes:
+Two separate actions put the keepers in a folder you choose, so the cull is
+useful on its own:
+
+**Deliver files…** (`F`) — leaves your originals alone.
 
 | mode | disk cost | your originals |
 |---|---|---|
 | **hardlink** (default) | none | stay where they are — same drive only |
 | **copy** | full size again | stay where they are |
-| **move** | none | **relocated to the new folder** |
 
-It always dry-runs first and shows exactly what it would do — how many files,
+**Move keepers…** (`M`) — **relocates your originals** into that folder, so the
+shoot folder is left holding only what you didn't keep. Deliberately a separate
+button rather than a third option in a dropdown: it is the one action that
+changes where your files live, and it shouldn't be a mis-click away.
+
+Both always dry-run first and shows exactly what it would do — how many files,
 which names would clash, whether there is room — and writes nothing until you
 confirm. Rejects are never included, nothing is overwritten, and nothing is
 deleted. Sidecars and JPEG siblings travel with the RAW.
